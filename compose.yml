@@ -1,0 +1,21 @@
+services:
+  payment-bot:
+    build:
+      context: .
+    env_file:
+      - .env
+    volumes:
+      - ./bot:/app/bot
+    ports:
+      - "6100:6100"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - MYSQL_HOST=host.docker.internal
+      - MYSQL_PORT=3306
+      - REDIS_HOST=host.docker.internal
+      - REDIS_PORT=6379
+
+volumes:
+  db-data:
+  redis-data:

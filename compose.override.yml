@@ -1,0 +1,10 @@
+services:
+  payment-bot:
+    environment:
+      - DEBUG=True
+    ports:
+      - "6100:6100"
+
+volumes:
+  db-data:
+  redis-data:

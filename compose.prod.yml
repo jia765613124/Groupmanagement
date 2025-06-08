@@ -1,0 +1,10 @@
+services:
+  payment-bot:
+    environment:
+      - DEBUG=False
+      - MYSQL_HOST=host.docker.internal
+      - MYSQL_PORT=3306
+      - REDIS_HOST=host.docker.internal
+      - REDIS_PORT=6379
+    ports:
+      - "6100:6100"
