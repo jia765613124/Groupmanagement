@@ -19,13 +19,13 @@ if __name__ == "__main__":
             uvicorn.run(
                 "api:app",
                 host="0.0.0.0",
-                port=6100,
+                port=6600,
                 reload=True,
                 reload_dirs=["bot"],
                 log_level="debug"
             )
         else:
-          uvicorn.run(app, host="0.0.0.0", port=6100)
+          uvicorn.run(app, host="0.0.0.0", port=6600)
           logger.info("Starting webhook DEBUG server USE_WEBHOOK: %s", config.DEBUG)
     else:
         logger.info("Starting bot polling")

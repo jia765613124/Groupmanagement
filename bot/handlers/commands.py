@@ -15,7 +15,6 @@ from aiogram.fsm.context import FSMContext
 from bot.config import get_config
 from bot.states import Menu
 from bot.misc import bot
-from bot.telethon_client import telegram_client
 from bot.database.db import SessionFactory
 from bot.utils import sanitize_text
 from bot.utils.wallet import generate_qr_code, validate_tron_address, check_recharge_status

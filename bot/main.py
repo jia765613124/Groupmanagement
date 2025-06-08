@@ -21,7 +21,6 @@ from bot.handlers.bot_monitor import bot_router
 from bot.ioc import DepsProvider
 from bot.misc import bot, dp
 from bot.tasks.recharge_checker import start_recharge_checker  # 导入定时任务
-# from bot.telethon_client import telegram_client
 from bot.utils import setup_logging
 from bot.states import Menu
 
@@ -73,8 +72,6 @@ async def start_pooling():
     启动轮询模式
     设置调度器并开始轮询消息
     """
-    # 连接Telethon客户端
-    # await telegram_client.connect()
     
     await setup_dispatcher(dp)
     # 设置机器人命令菜单
@@ -92,49 +89,13 @@ async def setup_webhook(bot: Bot):
     设置Webhook模式
     设置调度器并配置Webhook
     """
-    # 连接Telethon客户端
-    # await telegram_client.connect()
     
     await setup_dispatcher(dp)
     # 设置机器人命令菜单
     await setup_bot_commands()
 
-    # 启动充值检查定时任务
-    asyncio.create_task(start_recharge_checker())
+    # # 启动充值检查定时任务
+    # asyncio.create_task(start_recharge_checker())
     logger.info("Started recharge checker task")
 
     await bot.set_webhook(config.WEBHOOK_URL, secret_token=config.BOT_SECRET_TOKEN)
-
-
-async def main():
-    """
-    启动机器人
-    """
-    # 设置日志
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler('logs/bot.log'),
-            logging.StreamHandler()
-        ]
-    )
-
-    # 注册路由
-    dp.include_router(commands_router)
-    dp.include_router(message_router)
-
-    # 设置命令
-    await setup_bot_commands()
-
-    # 启动充值检查定时任务
-    asyncio.create_task(start_recharge_checker())
-    logger.info("启动定时任务")
-
-    # 启动机器人
-    logger.info("Starting bot...")
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
