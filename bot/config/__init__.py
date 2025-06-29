@@ -1,3 +1,6 @@
+# bot.config package
+
+# 重新定义配置以避免循环导入
 from functools import lru_cache
 from typing import final
 
@@ -82,3 +85,6 @@ def get_config() -> Config:
     使用缓存装饰器确保只创建一个配置实例
     """
     return Config()  # type: ignore
+
+
+__all__ = ['get_config', 'Config'] 

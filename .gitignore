@@ -1,5 +1,5 @@
 # Python
-__pycache__/
+# __pycache__/  # 取消忽略 __pycache__ 目录
 *.py[cod]
 *$py.class
 *.so
@@ -162,7 +162,7 @@ $RECYCLE.BIN/
 *~
 
 # Logs
-logs/
+# logs/  # 取消忽略 logs 目录
 *.log
 
 # Database
