@@ -17,6 +17,8 @@ from aiogram import Router, F
 from aiogram.types import ChatMemberUpdated, ChatMember
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, JOIN_TRANSITION, LEAVE_TRANSITION
+from telethon import TelegramClient, events
+from bot.utils.group_info import GroupInfoHelper
 
 from bot.config import get_config
 
@@ -26,6 +28,188 @@ config = get_config()
 
 # 创建群组监控路由器
 group_router = Router(name="group_monitor")
+
+class GroupMonitor:
+    """群组监控器"""
+    
+    def __init__(self, client: TelegramClient):
+        self.client = client
+        self.group_helper = GroupInfoHelper(client)
+        
+        # 注册事件处理器
+        self._register_handlers()
+    
+    def _register_handlers(self):
+        """注册事件处理器"""
+        
+        @self.client.on(events.NewMessage(pattern=r'^/groupinfo$'))
+        async def group_info_command(event):
+            """群组信息命令处理器"""
+            await self._handle_group_info_command(event)
+        
+        @self.client.on(events.NewMessage(pattern=r'^/mygroups$'))
+        async def my_groups_command(event):
+            """我的群组命令处理器"""
+            await self._handle_my_groups_command(event)
+        
+        @self.client.on(events.NewMessage(pattern=r'^/searchgroup\s+(.+)$'))
+        async def search_group_command(event):
+            """搜索群组命令处理器"""
+            await self._handle_search_group_command(event)
+        
+        @self.client.on(events.NewMessage(pattern=r'^/groupid$'))
+        async def group_id_command(event):
+            """获取当前群组ID命令处理器"""
+            await self._handle_group_id_command(event)
+    
+    async def _handle_group_info_command(self, event):
+        """处理群组信息命令"""
+        try:
+            # 检查权限（仅管理员）
+            if not await self._check_admin_permission(event):
+                await event.respond("❌ 此命令仅限管理员使用")
+                return
+            
+            # 获取当前群组信息
+            chat_id = event.chat_id
+            group_info = await self.group_helper.get_chat_info(chat_id)
+            
+            if group_info:
+                message = self.group_helper.format_group_info(group_info)
+                await event.respond(message, parse_mode="Markdown")
+            else:
+                await event.respond("❌ 无法获取群组信息")
+                
+        except Exception as e:
+            logger.error(f"处理群组信息命令失败: {e}")
+            await event.respond("❌ 获取群组信息失败")
+    
+    async def _handle_my_groups_command(self, event):
+        """处理我的群组命令"""
+        try:
+            # 检查权限（仅管理员）
+            if not await self._check_admin_permission(event):
+                await event.respond("❌ 此命令仅限管理员使用")
+                return
+            
+            # 获取机器人所在的群组列表
+            groups = await self.group_helper.get_my_groups()
+            
+            if groups:
+                message = self.group_helper.format_group_list(groups, "机器人所在群组")
+                await event.respond(message, parse_mode="Markdown")
+            else:
+                await event.respond("❌ 无法获取群组列表")
+                
+        except Exception as e:
+            logger.error(f"处理我的群组命令失败: {e}")
+            await event.respond("❌ 获取群组列表失败")
+    
+    async def _handle_search_group_command(self, event):
+        """处理搜索群组命令"""
+        try:
+            # 检查权限（仅管理员）
+            if not await self._check_admin_permission(event):
+                await event.respond("❌ 此命令仅限管理员使用")
+                return
+            
+            # 获取搜索关键词
+            query = event.pattern_match.group(1).strip()
+            
+            if not query:
+                await event.respond("❌ 请输入搜索关键词")
+                return
+            
+            # 搜索群组
+            results = await self.group_helper.search_groups(query)
+            
+            if results:
+                message = self.group_helper.format_group_list(results, f"搜索结果: {query}")
+                await event.respond(message, parse_mode="Markdown")
+            else:
+                await event.respond(f"❌ 未找到包含 '{query}' 的群组")
+                
+        except Exception as e:
+            logger.error(f"处理搜索群组命令失败: {e}")
+            await event.respond("❌ 搜索群组失败")
+    
+    async def _handle_group_id_command(self, event):
+        """处理获取群组ID命令"""
+        try:
+            # 获取当前群组信息
+            chat_id = event.chat_id
+            group_info = await self.group_helper.get_chat_info(chat_id)
+            
+            if group_info:
+                message = f"📋 **当前群组信息**\n\n"
+                message += f"🆔 **群组ID:** `{group_info['id']}`\n"
+                message += f"📝 **群组名称:** {group_info['title']}\n"
+                
+                if group_info.get('username'):
+                    message += f"🔗 **用户名:** @{group_info['username']}\n"
+                
+                message += f"📊 **类型:** {group_info['type']}\n"
+                
+                # 添加配置示例
+                message += f"\n🔧 **配置示例:**\n"
+                message += f"```python\n"
+                message += f"GroupConfig(\n"
+                message += f"    group_id={group_info['id']},\n"
+                message += f"    group_name=\"{group_info['title']}\",\n"
+                message += f"    game_type=\"lottery\",\n"
+                message += f"    enabled=True,\n"
+                message += f"    admin_only=False,\n"
+                message += f"    min_bet=1,\n"
+                message += f"    max_bet=100000,\n"
+                message += f"    auto_draw=True,\n"
+                message += f"    notification_groups=[{group_info['id']}]\n"
+                message += f"),\n"
+                message += f"```"
+                
+                await event.respond(message, parse_mode="Markdown")
+            else:
+                await event.respond("❌ 无法获取群组信息")
+                
+        except Exception as e:
+            logger.error(f"处理群组ID命令失败: {e}")
+            await event.respond("❌ 获取群组ID失败")
+    
+    async def _check_admin_permission(self, event) -> bool:
+        """检查管理员权限"""
+        try:
+            # 获取发送者信息
+            sender = await event.get_sender()
+            
+            # 检查是否是机器人管理员
+            if hasattr(sender, 'id'):
+                # 这里可以添加管理员ID列表检查
+                admin_ids = self._get_admin_ids()
+                return sender.id in admin_ids
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"检查管理员权限失败: {e}")
+            return False
+    
+    def _get_admin_ids(self) -> list:
+        """获取管理员ID列表"""
+        # 从环境变量或配置文件获取管理员ID
+        import os
+        admin_ids_str = os.getenv("TELEGRAM_ADMIN_IDS", "")
+        if admin_ids_str:
+            return [int(uid.strip()) for uid in admin_ids_str.split(",") if uid.strip()]
+        return []
+
+# 全局实例
+group_monitor = None
+
+async def get_group_monitor(client: TelegramClient) -> GroupMonitor:
+    """获取群组监控器实例"""
+    global group_monitor
+    if group_monitor is None:
+        group_monitor = GroupMonitor(client)
+    return group_monitor
 
 async def check_bot_permissions(bot, chat_id: int) -> bool:
     """检查机器人是否具有必要的权限

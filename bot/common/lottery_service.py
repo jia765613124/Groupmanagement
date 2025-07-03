@@ -1,0 +1,450 @@
+"""
+开奖服务类
+处理开奖、投注、结算等业务逻辑
+"""
+
+from typing import Dict, Optional, Tuple, List
+from datetime import datetime, timedelta
+from bot.config.lottery_config import LotteryConfig
+from bot.crud.lottery import lottery_draw, lottery_bet, lottery_cashback
+from bot.crud.account import account as account_crud
+from bot.crud.account_transaction import account_transaction as transaction_crud
+from bot.common.uow import UoW
+import logging
+
+logger = logging.getLogger(__name__)
+
+class LotteryService:
+    """开奖服务类"""
+    
+    # 开奖相关交易类型常量
+    TRANSACTION_TYPE_LOTTERY_BET = 30  # 开奖投注
+    TRANSACTION_TYPE_LOTTERY_WIN = 31  # 开奖中奖
+    TRANSACTION_TYPE_LOTTERY_CASHBACK = 32  # 开奖返水
+    
+    # 账户类型常量
+    ACCOUNT_TYPE_POINTS = 1  # 积分账户
+    
+    def __init__(self, uow: UoW):
+        self.uow = uow
+    
+    def generate_draw_number(self) -> str:
+        """生成期号"""
+        import random
+        now = datetime.now()
+        # 格式: YYYYMMDDHHMMSSffffff + 3位随机数
+        timestamp = now.strftime("%Y%m%d%H%M%S%f")  # 20位
+        random_num = f"{random.randint(100, 999)}"  # 3位
+        return f"{timestamp}{random_num}"
+    
+    async def create_new_draw(self, group_id: int, game_type: str) -> Dict:
+        """为指定群组和游戏类型创建新的开奖期"""
+        try:
+            # 生成期号（年月日时分秒+随机数）
+            draw_number = self.generate_draw_number()
+            draw_time = datetime.now()
+            
+            # 检查是否已存在
+            existing_draw = await lottery_draw.get_by_draw_number(self.uow.session, game_type, draw_number)
+            if existing_draw:
+                return {
+                    "success": False,
+                    "message": "期号已存在"
+                }
+            
+            # 创建新期
+            draw_data = {
+                "group_id": group_id,
+                "game_type": game_type,
+                "draw_number": draw_number,
+                "result": 0,  # 暂时为0，开奖时更新
+                "total_bets": 0,
+                "total_payout": 0,
+                "profit": 0,
+                "status": 1,  # 进行中
+                "draw_time": draw_time,
+                "remarks": "新开奖期"
+            }
+            
+            new_draw = await lottery_draw.create(self.uow.session, obj_in=draw_data)
+            
+            return {
+                "success": True,
+                "draw": new_draw,
+                "message": f"第 {draw_number} 期已创建"
+            }
+            
+        except Exception as e:
+            logger.error(f"创建新开奖期失败: {e}")
+            return {
+                "success": False,
+                "message": "创建开奖期失败"
+            }
+    
+    async def place_bet(self, group_id: int, telegram_id: int, bet_type: str, bet_amount: int) -> Dict:
+        """下注"""
+        try:
+            # 获取当前期
+            current_draw = await lottery_draw.get_current_draw(self.uow.session, group_id, "lottery")
+            if not current_draw:
+                return {
+                    "success": False,
+                    "message": "当前没有进行中的开奖期"
+                }
+            
+            # 检查投注类型是否有效
+            bet_type_info = LotteryConfig.get_bet_type_info(bet_type)
+            if not bet_type_info and not (bet_type.isdigit() and 0 <= int(bet_type) <= 9):
+                return {
+                    "success": False,
+                    "message": "无效的投注类型"
+                }
+            
+            # 检查投注金额
+            if bet_type_info:
+                if bet_amount < bet_type_info.min_bet or bet_amount > bet_type_info.max_bet:
+                    return {
+                        "success": False,
+                        "message": f"投注金额必须在 {bet_type_info.min_bet:,} - {bet_type_info.max_bet:,} U 之间"
+                    }
+                odds = bet_type_info.odds
+            else:
+                # 数字投注
+                if bet_amount < LotteryConfig.NUMBER_BET_MIN or bet_amount > LotteryConfig.NUMBER_BET_MAX:
+                    return {
+                        "success": False,
+                        "message": f"数字投注金额必须在 {LotteryConfig.NUMBER_BET_MIN:,} - {LotteryConfig.NUMBER_BET_MAX:,} U 之间"
+                    }
+                odds = LotteryConfig.NUMBER_BET_ODDS
+            
+            # 检查用户积分
+            account = await account_crud.get_by_telegram_id_and_type(
+                self.uow.session, 
+                telegram_id, 
+                self.ACCOUNT_TYPE_POINTS
+            )
+            
+            if not account or account.available_amount < bet_amount:
+                return {
+                    "success": False,
+                    "message": "积分不足"
+                }
+            
+            # 执行投注
+            async with self.uow:
+                # 扣除积分
+                account.available_amount -= bet_amount
+                account.total_amount -= bet_amount
+                await account_crud.update(
+                    session=self.uow.session,
+                    db_obj=account,
+                    obj_in={"available_amount": account.available_amount, "total_amount": account.total_amount}
+                )
+                
+                # 记录扣除交易
+                await transaction_crud.create(
+                    session=self.uow.session,
+                    account_id=account.id,
+                    telegram_id=telegram_id,
+                    account_type=self.ACCOUNT_TYPE_POINTS,
+                    transaction_type=self.TRANSACTION_TYPE_LOTTERY_BET,
+                    amount=-bet_amount,
+                    balance=account.available_amount,
+                    remarks=f"开奖投注 {bet_type} {bet_amount}U"
+                )
+                
+                # 创建投注记录
+                cashback_amount = LotteryConfig.calculate_cashback(bet_amount)
+                cashback_expire_time = datetime.now() + timedelta(hours=24)
+                
+                bet_data = {
+                    "group_id": group_id,
+                    "game_type": "lottery",
+                    "draw_number": current_draw.draw_number,
+                    "telegram_id": telegram_id,
+                    "bet_type": bet_type,
+                    "bet_amount": bet_amount,
+                    "odds": odds,
+                    "is_win": False,
+                    "win_amount": 0,
+                    "cashback_amount": cashback_amount,
+                    "cashback_claimed": False,
+                    "cashback_expire_time": cashback_expire_time,
+                    "status": 1,  # 投注中
+                    "remarks": f"投注 {bet_type}"
+                }
+                
+                bet_record = await lottery_bet.create(self.uow.session, obj_in=bet_data)
+                
+                # 更新开奖期总投注金额
+                current_draw.total_bets += bet_amount
+                await lottery_draw.update(
+                    session=self.uow.session,
+                    db_obj=current_draw,
+                    obj_in={"total_bets": current_draw.total_bets}
+                )
+                
+                await self.uow.commit()
+                
+                return {
+                    "success": True,
+                    "bet": bet_record,
+                    "message": f"投注成功！期号: {current_draw.draw_number}, 投注: {bet_type}, 金额: {bet_amount}U"
+                }
+                
+        except Exception as e:
+            logger.error(f"下注失败: {e}")
+            return {
+                "success": False,
+                "message": "下注失败，请稍后重试"
+            }
+    
+    async def draw_lottery(self, group_id: int) -> Dict:
+        """开奖"""
+        try:
+            # 获取当前期
+            current_draw = await lottery_draw.get_current_draw(self.uow.session, group_id, "lottery")
+            if not current_draw:
+                return {
+                    "success": False,
+                    "message": "没有进行中的开奖期"
+                }
+            
+            # 生成开奖结果
+            result = LotteryConfig.generate_lottery_result()
+            
+            # 获取该期所有投注
+            bets = await lottery_bet.get_by_draw_number(self.uow.session, group_id, "lottery", current_draw.draw_number)
+            
+            total_payout = 0
+            
+            async with self.uow:
+                # 更新开奖结果
+                await lottery_draw.update(
+                    session=self.uow.session,
+                    db_obj=current_draw,
+                    obj_in={
+                        "result": result,
+                        "status": 2,  # 已开奖
+                        "draw_time": datetime.now()
+                    }
+                )
+                
+                # 结算所有投注
+                for bet in bets:
+                    # 检查是否中奖
+                    is_win = LotteryConfig.check_bet_win(bet.bet_type, bet.bet_amount, result)
+                    win_amount = LotteryConfig.calculate_win_amount(bet.bet_type, bet.bet_amount) if is_win else 0
+                    
+                    # 更新投注记录
+                    await lottery_bet.update(
+                        session=self.uow.session,
+                        db_obj=bet,
+                        obj_in={
+                            "is_win": is_win,
+                            "win_amount": win_amount,
+                            "status": 3  # 已结算
+                        }
+                    )
+                    
+                    # 如果中奖，发放奖励
+                    if is_win and win_amount > 0:
+                        account = await account_crud.get_by_telegram_id_and_type(
+                            self.uow.session,
+                            bet.telegram_id,
+                            self.ACCOUNT_TYPE_POINTS
+                        )
+                        
+                        if account:
+                            account.available_amount += win_amount
+                            account.total_amount += win_amount
+                            await account_crud.update(
+                                session=self.uow.session,
+                                db_obj=account,
+                                obj_in={"available_amount": account.available_amount, "total_amount": account.total_amount}
+                            )
+                            
+                            # 记录中奖交易
+                            await transaction_crud.create(
+                                session=self.uow.session,
+                                account_id=account.id,
+                                telegram_id=bet.telegram_id,
+                                account_type=self.ACCOUNT_TYPE_POINTS,
+                                transaction_type=self.TRANSACTION_TYPE_LOTTERY_WIN,
+                                amount=win_amount,
+                                balance=account.available_amount,
+                                remarks=f"开奖中奖 {bet.bet_type} {win_amount}U"
+                            )
+                            
+                            total_payout += win_amount
+                
+                # 更新开奖期统计
+                profit = current_draw.total_bets - total_payout
+                await lottery_draw.update(
+                    session=self.uow.session,
+                    db_obj=current_draw,
+                    obj_in={
+                        "total_payout": total_payout,
+                        "profit": profit
+                    }
+                )
+                
+                await self.uow.commit()
+                
+                return {
+                    "success": True,
+                    "draw": current_draw,
+                    "result": result,
+                    "total_bets": current_draw.total_bets,
+                    "total_payout": total_payout,
+                    "profit": profit,
+                    "message": f"第 {current_draw.draw_number} 期开奖完成，结果: {result}"
+                }
+                
+        except Exception as e:
+            logger.error(f"开奖失败: {e}")
+            return {
+                "success": False,
+                "message": "开奖失败"
+            }
+    
+    async def claim_cashback(self, telegram_id: int) -> Dict:
+        """领取返水"""
+        try:
+            # 获取用户未领取的返水
+            unclaimed_bets = await lottery_bet.get_unclaimed_cashback(self.uow.session, telegram_id)
+            
+            if not unclaimed_bets:
+                return {
+                    "success": False,
+                    "message": "没有可领取的返水"
+                }
+            
+            total_cashback = 0
+            
+            async with self.uow:
+                for bet in unclaimed_bets:
+                    if not bet.cashback_claimed and bet.cashback_expire_time > datetime.now():
+                        # 标记返水已领取
+                        await lottery_bet.update(
+                            session=self.uow.session,
+                            db_obj=bet,
+                            obj_in={"cashback_claimed": True}
+                        )
+                        
+                        # 创建返水记录
+                        cashback_data = {
+                            "bet_id": bet.id,
+                            "telegram_id": telegram_id,
+                            "amount": bet.cashback_amount,
+                            "status": 1,  # 待领取
+                            "remarks": f"投注返水 {bet.bet_type}"
+                        }
+                        
+                        await lottery_cashback.create(self.uow.session, obj_in=cashback_data)
+                        
+                        total_cashback += bet.cashback_amount
+                
+                if total_cashback > 0:
+                    # 发放返水到用户账户
+                    account = await account_crud.get_by_telegram_id_and_type(
+                        self.uow.session,
+                        telegram_id,
+                        self.ACCOUNT_TYPE_POINTS
+                    )
+                    
+                    if account:
+                        account.available_amount += total_cashback
+                        account.total_amount += total_cashback
+                        await account_crud.update(
+                            session=self.uow.session,
+                            db_obj=account,
+                            obj_in={"available_amount": account.available_amount, "total_amount": account.total_amount}
+                        )
+                        
+                        # 记录返水交易
+                        await transaction_crud.create(
+                            session=self.uow.session,
+                            account_id=account.id,
+                            telegram_id=telegram_id,
+                            account_type=self.ACCOUNT_TYPE_POINTS,
+                            transaction_type=self.TRANSACTION_TYPE_LOTTERY_CASHBACK,
+                            amount=total_cashback,
+                            balance=account.available_amount,
+                            remarks=f"开奖返水 {total_cashback}U"
+                        )
+                
+                await self.uow.commit()
+                
+                return {
+                    "success": True,
+                    "total_cashback": total_cashback,
+                    "message": f"成功领取返水 {total_cashback}U"
+                }
+                
+        except Exception as e:
+            logger.error(f"领取返水失败: {e}")
+            return {
+                "success": False,
+                "message": "领取返水失败"
+            }
+    
+    async def get_user_bet_history(self, telegram_id: int, limit: int = 20) -> Dict:
+        """获取用户投注历史"""
+        try:
+            bets = await lottery_bet.get_by_telegram_id(self.uow.session, telegram_id, limit)
+            
+            history = []
+            for bet in bets:
+                history.append({
+                    "draw_number": bet.draw_number,
+                    "bet_type": bet.bet_type,
+                    "bet_amount": bet.bet_amount,
+                    "is_win": bet.is_win,
+                    "win_amount": bet.win_amount,
+                    "cashback_amount": bet.cashback_amount,
+                    "cashback_claimed": bet.cashback_claimed,
+                    "created_at": bet.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                })
+            
+            return {
+                "success": True,
+                "history": history,
+                "total": len(history)
+            }
+            
+        except Exception as e:
+            logger.error(f"获取投注历史失败: {e}")
+            return {
+                "success": False,
+                "message": "获取投注历史失败"
+            }
+    
+    async def get_recent_draws(self, limit: int = 10) -> Dict:
+        """获取最近开奖记录"""
+        try:
+            draws = await lottery_draw.get_recent_draws(self.uow.session, limit)
+            
+            history = []
+            for draw in draws:
+                history.append({
+                    "draw_number": draw.draw_number,
+                    "result": draw.result,
+                    "total_bets": draw.total_bets,
+                    "total_payout": draw.total_payout,
+                    "profit": draw.profit,
+                    "draw_time": draw.draw_time.strftime("%Y-%m-%d %H:%M:%S")
+                })
+            
+            return {
+                "success": True,
+                "history": history,
+                "total": len(history)
+            }
+            
+        except Exception as e:
+            logger.error(f"获取开奖历史失败: {e}")
+            return {
+                "success": False,
+                "message": "获取开奖历史失败"
+            } 

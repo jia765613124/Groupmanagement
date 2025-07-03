@@ -18,9 +18,10 @@ from bot.handlers.commands import commands_router, setup_bot_commands
 from bot.handlers.message_monitor import message_router
 from bot.handlers.group_monitor import group_router
 from bot.handlers.bot_monitor import bot_router
+from bot.handlers.lottery_handler import lottery_router  # 导入开奖处理器
 from bot.ioc import DepsProvider
 from bot.misc import bot, dp
-from bot.tasks.recharge_checker import start_recharge_checker  # 导入定时任务
+from bot.tasks.lottery_scheduler import start_lottery_scheduler, stop_lottery_scheduler  # 导入开奖调度器
 from bot.utils import setup_logging
 from bot.states import Menu
 
@@ -39,6 +40,7 @@ def register_routers(router: Router):
     # 注册所有路由器，按优先级排序
     router.include_router(group_router)       # 群组成员监控放在最前面
     router.include_router(bot_router)         # 机器人状态监控
+    router.include_router(lottery_router)     # 开奖处理器
     router.include_router(commands_router)    # 命令路由器
     router.include_router(message_router)     # 消息监控放在最后
     logger.info("Routers registered successfully")
@@ -74,12 +76,21 @@ async def start_pooling():
     """
     
     await setup_dispatcher(dp)
-    # 设置机器人命令菜单
-    await setup_bot_commands()
+    
+    try:
+        # 设置机器人命令菜单
+        await setup_bot_commands()
+        logger.info("Bot commands setup successfully")
+    except Exception as e:
+        logger.warning(f"Failed to setup bot commands: {e}")
+        # 继续运行，不因为命令设置失败而停止
 
-    # 启动充值检查定时任务
-    # asyncio.create_task(start_recharge_checker())
-    # logger.info("Started recharge checker task")
+    # 启动开奖调度器
+    try:
+        asyncio.create_task(start_lottery_scheduler())
+        logger.info("Started lottery scheduler task")
+    except Exception as e:
+        logger.error(f"Failed to start lottery scheduler: {e}")
 
     await dp.start_polling(bot, skip_updates=True)
 
@@ -91,11 +102,19 @@ async def setup_webhook(bot: Bot):
     """
     
     await setup_dispatcher(dp)
-    # 设置机器人命令菜单
-    await setup_bot_commands()
+    
+    try:
+        # 设置机器人命令菜单
+        await setup_bot_commands()
+        logger.info("Bot commands setup successfully")
+    except Exception as e:
+        logger.warning(f"Failed to setup bot commands: {e}")
 
-    # # 启动充值检查定时任务
-    # asyncio.create_task(start_recharge_checker())
-    logger.info("Started recharge checker task")
+    # 启动开奖调度器
+    try:
+        asyncio.create_task(start_lottery_scheduler())
+        logger.info("Started lottery scheduler task")
+    except Exception as e:
+        logger.error(f"Failed to start lottery scheduler: {e}")
 
     await bot.set_webhook(config.WEBHOOK_URL, secret_token=config.BOT_SECRET_TOKEN)

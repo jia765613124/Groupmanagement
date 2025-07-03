@@ -10,6 +10,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 环境变量文件名
 ENV_FILE_NAME = ".env"
 
+from bot.config.multi_game_config import MultiGameConfig
+from bot.config.lottery_config import LotteryConfig
+
+# 全局配置实例
+multi_game_config = MultiGameConfig()
+lottery_config = LotteryConfig()
 
 @final
 class Config(BaseSettings):
@@ -86,5 +92,13 @@ def get_config() -> Config:
     """
     return Config()  # type: ignore
 
+
+def get_multi_game_config() -> MultiGameConfig:
+    """获取多群组配置实例"""
+    return multi_game_config
+
+def get_lottery_config() -> LotteryConfig:
+    """获取单群组配置实例（向后兼容）"""
+    return lottery_config
 
 __all__ = ['get_config', 'Config'] 
