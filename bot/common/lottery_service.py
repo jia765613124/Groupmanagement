@@ -105,7 +105,7 @@ class LotteryService:
                 if bet_amount < bet_type_info.min_bet or bet_amount > bet_type_info.max_bet:
                     return {
                         "success": False,
-                        "message": f"投注金额必须在 {bet_type_info.min_bet:,} - {bet_type_info.max_bet:,} U 之间"
+                        "message": f"投注积分必须在 {bet_type_info.min_bet:,} - {bet_type_info.max_bet:,} 积分之间"
                     }
                 odds = bet_type_info.odds
             else:
@@ -113,7 +113,7 @@ class LotteryService:
                 if bet_amount < LotteryConfig.NUMBER_BET_MIN or bet_amount > LotteryConfig.NUMBER_BET_MAX:
                     return {
                         "success": False,
-                        "message": f"数字投注金额必须在 {LotteryConfig.NUMBER_BET_MIN:,} - {LotteryConfig.NUMBER_BET_MAX:,} U 之间"
+                        "message": f"数字投注积分必须在 {LotteryConfig.NUMBER_BET_MIN:,} - {LotteryConfig.NUMBER_BET_MAX:,} 积分之间"
                     }
                 odds = LotteryConfig.NUMBER_BET_ODDS
             
@@ -127,7 +127,22 @@ class LotteryService:
             if not account or account.available_amount < bet_amount:
                 return {
                     "success": False,
-                    "message": "积分不足"
+                    "message": "积分余额不足"
+                }
+            
+            # 检查是否已经下过相同类型的注
+            existing_bet = await lottery_bet.get_by_user_draw_bet_type(
+                self.uow.session,
+                group_id=group_id,
+                draw_number=current_draw.draw_number,
+                telegram_id=telegram_id,
+                bet_type=bet_type
+            )
+            
+            if existing_bet:
+                return {
+                    "success": False,
+                    "message": f"您已经对 {bet_type} 下过注了，不能重复投注"
                 }
             
             # 执行投注
@@ -150,7 +165,7 @@ class LotteryService:
                     transaction_type=self.TRANSACTION_TYPE_LOTTERY_BET,
                     amount=-bet_amount,
                     balance=account.available_amount,
-                    remarks=f"开奖投注 {bet_type} {bet_amount}U"
+                    remarks=f"开奖投注 {bet_type} {bet_amount}积分"
                 )
                 
                 # 创建投注记录
@@ -189,7 +204,7 @@ class LotteryService:
                 return {
                     "success": True,
                     "bet": bet_record,
-                    "message": f"投注成功！期号: {current_draw.draw_number}, 投注: {bet_type}, 金额: {bet_amount}U"
+                    "message": f"投注成功！期号: {current_draw.draw_number}, 投注: {bet_type}, 积分: {bet_amount}"
                 }
                 
         except Exception as e:
@@ -273,7 +288,7 @@ class LotteryService:
                                 transaction_type=self.TRANSACTION_TYPE_LOTTERY_WIN,
                                 amount=win_amount,
                                 balance=account.available_amount,
-                                remarks=f"开奖中奖 {bet.bet_type} {win_amount}U"
+                                remarks=f"开奖中奖 {bet.bet_type} {win_amount}积分"
                             )
                             
                             total_payout += win_amount
@@ -371,7 +386,7 @@ class LotteryService:
                             transaction_type=self.TRANSACTION_TYPE_LOTTERY_CASHBACK,
                             amount=total_cashback,
                             balance=account.available_amount,
-                            remarks=f"开奖返水 {total_cashback}U"
+                            remarks=f"开奖返水 {total_cashback}积分"
                         )
                 
                 await self.uow.commit()
@@ -379,7 +394,7 @@ class LotteryService:
                 return {
                     "success": True,
                     "total_cashback": total_cashback,
-                    "message": f"成功领取返水 {total_cashback}U"
+                    "message": f"成功领取返水 {total_cashback}积分"
                 }
                 
         except Exception as e:
@@ -389,41 +404,88 @@ class LotteryService:
                 "message": "领取返水失败"
             }
     
-    async def get_user_bet_history(self, telegram_id: int, limit: int = 20) -> Dict:
-        """获取用户投注历史"""
+    async def get_user_bet_history(self, telegram_id: int, limit: int = 10, offset: int = 0) -> Dict:
+        """
+        获取用户投注历史（支持分页）
+        
+        Args:
+            telegram_id: Telegram用户ID
+            limit: 限制记录数量
+            offset: 分页偏移量
+            
+        Returns:
+            投注历史记录
+        """
         try:
-            bets = await lottery_bet.get_by_telegram_id(self.uow.session, telegram_id, limit)
-            
-            history = []
-            for bet in bets:
-                history.append({
-                    "draw_number": bet.draw_number,
-                    "bet_type": bet.bet_type,
-                    "bet_amount": bet.bet_amount,
-                    "is_win": bet.is_win,
-                    "win_amount": bet.win_amount,
-                    "cashback_amount": bet.cashback_amount,
-                    "cashback_claimed": bet.cashback_claimed,
-                    "created_at": bet.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                })
-            
-            return {
-                "success": True,
-                "history": history,
-                "total": len(history)
-            }
-            
+            async with self.uow:
+                # 使用分页方法获取投注记录
+                bets = await lottery_bet.get_by_telegram_id_paginated(
+                    self.uow.session, 
+                    telegram_id=telegram_id,
+                    skip=offset,
+                    limit=limit
+                )
+                
+                # 获取总数
+                total_count = await lottery_bet.get_by_telegram_id_count(
+                    self.uow.session,
+                    telegram_id=telegram_id
+                )
+                
+                history = []
+                for bet in bets:
+                    history.append({
+                        "draw_number": bet.draw_number,
+                        "bet_type": bet.bet_type,
+                        "bet_amount": bet.bet_amount,
+                        "is_win": bet.is_win,
+                        "win_amount": bet.win_amount,
+                        "cashback_amount": bet.cashback_amount,
+                        "cashback_claimed": bet.cashback_claimed,
+                        "created_at": bet.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                
+                current_page = (offset // limit) + 1
+                total_pages = (total_count + limit - 1) // limit
+                
+                return {
+                    "success": True,
+                    "history": history,
+                    "total": total_count,
+                    "current_page": current_page,
+                    "total_pages": total_pages
+                }
+                
         except Exception as e:
             logger.error(f"获取投注历史失败: {e}")
             return {
                 "success": False,
-                "message": "获取投注历史失败"
+                "message": "获取投注历史失败",
+                "history": [],
+                "total": 0,
+                "current_page": 1,
+                "total_pages": 0
             }
     
-    async def get_recent_draws(self, limit: int = 10) -> Dict:
-        """获取最近开奖记录"""
+    async def get_recent_draws(self, group_id: int = None, game_type: str = "lottery", limit: int = 10) -> Dict:
+        """
+        获取最近开奖记录
+        
+        Args:
+            group_id: 群组ID，如果为None则获取所有群组
+            game_type: 游戏类型，默认为"lottery"
+            limit: 限制记录数量
+            
+        Returns:
+            开奖历史记录
+        """
         try:
-            draws = await lottery_draw.get_recent_draws(self.uow.session, limit)
+            if group_id:
+                # 获取指定群组的开奖记录
+                draws = await lottery_draw.get_recent_draws(self.uow.session, group_id, game_type, limit)
+            else:
+                # 获取所有群组的开奖记录
+                draws = await lottery_draw.get_recent_draws_all_groups(self.uow.session, game_type, limit)
             
             history = []
             for draw in draws:

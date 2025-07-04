@@ -24,8 +24,11 @@ _multi_config = MultiGameConfig()
 # 创建aiogram路由器
 lottery_router = Router(name="lottery")
 
+# 全局变量用于存储服务实例
+_lottery_service = None
+
 async def get_lottery_service():
-    """获取开奖服务实例"""
+    """获取彩票服务实例（异步，手动 new UoW）"""
     async with SessionFactory() as session:
         uow = UoW(session)
         return LotteryService(uow)
@@ -303,4 +306,232 @@ def _build_bet_result_message(result: dict):
         message += f"💬 **原因:** {result['message']}\n\n"
         message += "请检查余额或投注参数后重试。"
     
-    return message 
+    return message
+
+async def show_bets_page(message: Message, telegram_id: int, page: int, page_size: int = 5):
+    """
+    显示指定页面的投注记录
+    
+    Args:
+        message: 消息对象
+        telegram_id: 用户ID
+        page: 页码（从1开始）
+        page_size: 每页显示数量
+    """
+    try:
+        lottery_service = await get_lottery_service()
+        
+        # 计算分页参数
+        offset = (page - 1) * page_size
+        
+        # 获取用户投注历史（使用服务端分页）
+        result = await lottery_service.get_user_bet_history(
+            telegram_id=telegram_id,
+            limit=page_size,
+            offset=offset
+        )
+        
+        if result["success"]:
+            current_page_bets = result["history"]
+            total_bets = result["total"]
+            total_pages = result["total_pages"]
+            current_page = result["current_page"]
+            
+            if not current_page_bets:
+                await message.answer(
+                    "📝 **投注记录**\n\n"
+                    "您还没有任何投注记录。\n\n"
+                    "💡 开始投注：\n"
+                    "• 在群组中发送投注消息\n"
+                    "• 格式：大1000 小单100 数字8 押100\n"
+                    "• 支持大小单双、组合投注、数字投注"
+                )
+                return
+            
+            # 确保页码在有效范围内
+            if page < 1:
+                page = 1
+            elif page > total_pages:
+                page = total_pages
+            
+            # 构建投注记录消息
+            message_text = _build_bets_message(current_page_bets, page, total_pages, page_size)
+            
+            # 添加统计信息
+            stats_text = await _build_bets_stats(lottery_service, telegram_id, total_bets)
+            message_text += stats_text
+            
+            # 创建分页键盘
+            keyboard = _build_bets_keyboard(page, total_pages, telegram_id)
+            
+            # 发送或编辑消息
+            try:
+                # 尝试编辑消息（用于分页）
+                await message.edit_text(message_text, parse_mode="Markdown", reply_markup=keyboard)
+            except Exception as edit_error:
+                # 如果编辑失败，发送新消息
+                logger.warning(f"编辑消息失败，发送新消息: {edit_error}")
+                await message.answer(message_text, parse_mode="Markdown", reply_markup=keyboard)
+            
+        else:
+            await message.answer(f"❌ 获取投注记录失败: {result['message']}")
+            
+    except Exception as e:
+        logger.error(f"获取投注记录失败: {e}")
+        await message.answer("❌ 获取投注记录时发生错误，请稍后重试")
+
+async def show_recent_draws(message: Message, limit: int = 10):
+    """
+    显示最近开奖记录
+    
+    Args:
+        message: 消息对象
+        limit: 显示记录数量
+    """
+    try:
+        lottery_service = await get_lottery_service()
+        
+        # 获取最近开奖记录
+        result = await lottery_service.get_recent_draws(limit=limit)
+        
+        if result["success"]:
+            draws = result["history"]
+            
+            if not draws:
+                await message.answer("📊 **开奖记录**\n\n暂无开奖记录。")
+                return
+            
+            # 构建开奖记录消息
+            message_text = _build_draws_message(draws)
+            
+            await message.answer(message_text, parse_mode="Markdown")
+            
+        else:
+            await message.answer(f"❌ 获取开奖记录失败: {result['message']}")
+            
+    except Exception as e:
+        logger.error(f"获取开奖记录失败: {e}")
+        await message.answer("❌ 获取开奖记录时发生错误，请稍后重试")
+
+def _build_bets_message(bets: list, page: int, total_pages: int, page_size: int) -> str:
+    """构建投注记录消息"""
+    message_text = f"📝 **您的投注记录** (第 {page}/{total_pages} 页)\n\n"
+    
+    for i, bet in enumerate(bets, 1):
+        # 格式化时间
+        created_time = bet["created_at"][5:16]  # 取 MM-DD HH:MM 部分
+        
+        # 格式化投注信息
+        if bet["is_win"]:
+            status = "✅ 中奖"
+            win_info = f" +{bet['win_amount']}积分"
+        else:
+            status = "❌ 未中"
+            win_info = ""
+        
+        message_text += (
+            f"**{i}. {bet['bet_type']} {bet['bet_amount']}积分**\n"
+            f"   期号: {bet['draw_number']}\n"
+            f"   时间: {created_time}\n"
+            f"   状态: {status}{win_info}\n\n"
+        )
+    
+    message_text += f"📄 第 {page}/{total_pages} 页，每页 {page_size} 条记录\n\n"
+    
+    return message_text
+
+async def _build_bets_stats(lottery_service, telegram_id: int, total_bets: int) -> str:
+    """构建投注统计信息"""
+    try:
+        # 获取所有投注记录来计算统计
+        stats_result = await lottery_service.get_user_bet_history(
+            telegram_id=telegram_id,
+            limit=1000,  # 获取足够多的数据来计算统计
+            offset=0
+        )
+        
+        if stats_result["success"]:
+            all_bets_for_stats = stats_result["history"]
+            total_bet_amount = sum(bet["bet_amount"] for bet in all_bets_for_stats)
+            total_win_amount = sum(bet["win_amount"] for bet in all_bets_for_stats if bet["is_win"])
+            win_count = sum(1 for bet in all_bets_for_stats if bet["is_win"])
+        else:
+            # 如果获取统计失败，返回空统计
+            total_bet_amount = 0
+            total_win_amount = 0
+            win_count = 0
+        
+        win_rate = (win_count / total_bets * 100) if total_bets > 0 else 0
+        
+        stats_text = (
+            f"📊 **统计信息**\n"
+            f"总投注: {total_bets} 次\n"
+            f"总投注金额: {total_bet_amount:,} 积分\n"
+            f"中奖次数: {win_count} 次\n"
+            f"总中奖金额: {total_win_amount:,} 积分\n"
+            f"胜率: {win_rate:.1f}%"
+        )
+        
+        return stats_text
+        
+    except Exception as e:
+        logger.error(f"构建投注统计失败: {e}")
+        return "📊 **统计信息**\n获取统计信息失败"
+
+def _build_draws_message(draws: list) -> str:
+    """构建开奖记录消息"""
+    message_text = "📊 **最近开奖记录**\n\n"
+    
+    for i, draw in enumerate(draws, 1):
+        # 格式化时间
+        draw_time = draw["draw_time"][5:16]  # 取 MM-DD HH:MM 部分
+        
+        # 格式化结果
+        result_text = f"结果: {draw['result']}"
+        
+        # 格式化统计信息
+        profit_text = f"盈利: {draw['profit']:,} 积分" if draw['profit'] >= 0 else f"亏损: {abs(draw['profit']):,} 积分"
+        
+        message_text += (
+            f"**{i}. 第 {draw['draw_number']} 期**\n"
+            f"   {result_text}\n"
+            f"   投注总额: {draw['total_bets']:,} 积分\n"
+            f"   派奖总额: {draw['total_payout']:,} 积分\n"
+            f"   {profit_text}\n"
+            f"   开奖时间: {draw_time}\n\n"
+        )
+    
+    return message_text
+
+def _build_bets_keyboard(page: int, total_pages: int, telegram_id: int) -> InlineKeyboardMarkup:
+    """构建投注记录分页键盘"""
+    keyboard_buttons = []
+    
+    # 上一页按钮
+    if page > 1:
+        keyboard_buttons.append(
+            InlineKeyboardButton(
+                text="⬅️ 上一页",
+                callback_data=f"bets_page_{telegram_id}_{page-1}"
+            )
+        )
+    
+    # 下一页按钮
+    if page < total_pages:
+        keyboard_buttons.append(
+            InlineKeyboardButton(
+                text="下一页 ➡️",
+                callback_data=f"bets_page_{telegram_id}_{page+1}"
+            )
+        )
+    
+    # 如果只有一页，显示刷新按钮
+    if total_pages <= 1:
+        keyboard_buttons.append(
+            InlineKeyboardButton(
+                text="🔄 刷新",
+                callback_data=f"bets_page_{telegram_id}_1"
+            )
+        )
+    
+    return InlineKeyboardMarkup(inline_keyboard=[keyboard_buttons]) 

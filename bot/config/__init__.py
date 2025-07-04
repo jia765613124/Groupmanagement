@@ -74,7 +74,7 @@ class Config(BaseSettings):
         """
         获取Webhook路径
         """
-        return f"/webhook3"
+        return f"/webhook2"
 
     @property
     def WEBHOOK_URL(self) -> str:

@@ -43,6 +43,15 @@ class lottery_draw(CRUDBase[LotteryDraw]):
         result = await session.execute(stmt)
         return result.scalars().all()
     
+    async def get_recent_draws_all_groups(self, session: AsyncSession, game_type: str, limit: int = 10) -> List[LotteryDraw]:
+        """获取所有群组的最近开奖记录"""
+        stmt = select(LotteryDraw).where(
+            LotteryDraw.game_type == game_type,
+            LotteryDraw.status == 2
+        ).order_by(LotteryDraw.draw_time.desc()).limit(limit)
+        result = await session.execute(stmt)
+        return result.scalars().all()
+    
     async def get_draws_by_date_range(self, session: AsyncSession, group_id: int, game_type: str, start_date: datetime, end_date: datetime) -> List[LotteryDraw]:
         stmt = select(LotteryDraw).where(
             LotteryDraw.group_id == group_id,
@@ -95,6 +104,19 @@ class lottery_bet(CRUDBase[LotteryBet]):
         stmt = stmt.order_by(LotteryBet.created_at.desc()).limit(limit)
         result = await session.execute(stmt)
         return result.scalars().all()
+    
+    async def get_by_telegram_id_paginated(self, session: AsyncSession, telegram_id: int, skip: int = 0, limit: int = 10) -> List[LotteryBet]:
+        """获取用户投注记录（支持分页）"""
+        stmt = select(LotteryBet).where(LotteryBet.telegram_id == telegram_id)
+        stmt = stmt.order_by(LotteryBet.created_at.desc()).offset(skip).limit(limit)
+        result = await session.execute(stmt)
+        return result.scalars().all()
+    
+    async def get_by_telegram_id_count(self, session: AsyncSession, telegram_id: int) -> int:
+        """获取用户投注记录总数"""
+        stmt = select(func.count(LotteryBet.id)).where(LotteryBet.telegram_id == telegram_id)
+        result = await session.execute(stmt)
+        return result.scalar() or 0
     
     async def get_by_draw_and_telegram(self, session: AsyncSession, group_id: int, game_type: str, draw_number: str, telegram_id: int) -> List[LotteryBet]:
         stmt = select(LotteryBet).where(
@@ -161,6 +183,17 @@ class lottery_bet(CRUDBase[LotteryBet]):
         )
         result = await session.execute(stmt)
         return result.scalars().all()
+    
+    async def get_by_user_draw_bet_type(self, session: AsyncSession, group_id: int, draw_number: str, telegram_id: int, bet_type: str) -> Optional[LotteryBet]:
+        """检查用户是否已经对特定投注类型下过注"""
+        stmt = select(LotteryBet).where(
+            LotteryBet.group_id == group_id,
+            LotteryBet.draw_number == draw_number,
+            LotteryBet.telegram_id == telegram_id,
+            LotteryBet.bet_type == bet_type
+        )
+        result = await session.execute(stmt)
+        return result.scalars().first()
 
 
 class lottery_cashback(CRUDBase[LotteryCashback]):

@@ -71,8 +71,13 @@ package_project() {
     print_message "复制 migrations 目录..."
     cp -r migrations "$temp_dir/"
     
-    print_message "复制 sessions 目录..."
-    cp -r sessions "$temp_dir/"
+    # 检查sessions目录是否存在，如果存在则复制
+    if [ -d "sessions" ]; then
+        print_message "复制 sessions 目录..."
+        cp -r sessions "$temp_dir/"
+    else
+        print_warning "sessions 目录不存在，跳过复制"
+    fi
     
     # 创建部署脚本
     cat > "$temp_dir/deploy.sh" << 'EOF'
@@ -126,17 +131,22 @@ EOF
     
     chmod +x "$temp_dir/deploy.sh"
     
-    # 创建压缩包
-    tar -czf PaymentBot.tar.gz "$temp_dir"
+    # 进入临时目录，将内容移动到当前目录
+    cd "$temp_dir"
+    
+    # 创建压缩包（从临时目录内部打包，这样解压后直接是文件，没有外层目录）
+    tar -czf ../GroupManagement.tar.gz ./*
+    
+    # 返回原目录
+    cd ..
     
     # 清理临时目录
     rm -rf "$temp_dir"
     
-    print_message "打包完成！文件: PaymentBot.tar.gz"
+    print_message "打包完成！文件: GroupManagement.tar.gz"
     print_message "使用方法："
-    print_message "1. 解压文件：tar -xzf PaymentBot.tar.gz"
-    print_message "2. 进入目录：cd deploy_temp"
-    print_message "3. 执行部署：./deploy.sh"
+    print_message "1. 解压文件：tar -xzf GroupManagement.tar.gz"
+    print_message "2. 执行部署：./deploy.sh"
 }
 
 # 主函数

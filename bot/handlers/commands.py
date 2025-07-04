@@ -21,6 +21,12 @@ BASIC_COMMANDS = [
     BotCommand(command="start", description="开始使用"),
     BotCommand(command="help", description="获取帮助信息"),
     BotCommand(command="fish", description="🎣 钓鱼游戏"),
+    BotCommand(command="bets", description="🎲 查看投注记录"),
+]
+
+# 管理员命令（仅管理员可见）
+ADMIN_COMMANDS = [
+    BotCommand(command="draws", description="📊 查看开奖记录"),
 ]
 
 async def setup_bot_commands():
@@ -38,12 +44,16 @@ async def setup_bot_commands():
             await bot.delete_my_commands(scope=scope)
             logger.info(f"✅ 已清理作用域命令: {scope.type}")
 
-        # 设置新的命令
+        # 设置基本命令（所有用户可见）
         await bot.set_my_commands(
             commands=BASIC_COMMANDS,
             scope=BotCommandScopeDefault()
         )
         logger.info("✅ 成功设置基本命令：%s", [cmd.command for cmd in BASIC_COMMANDS])
+
+        # 设置管理员命令（仅管理员可见）
+        # 注意：Telegram Bot API 不支持按用户角色设置命令，这里只是记录
+        logger.info("✅ 管理员命令：%s", [cmd.command for cmd in ADMIN_COMMANDS])
 
     except Exception as e:
         logger.error("❌ 设置机器人命令失败: %s", e, exc_info=True)
@@ -280,7 +290,8 @@ async def help_handler(message: Message) -> None:
         "• /pin - 置顶消息\n"
         "• /unpin - 取消置顶\n\n"
         "🎣 娱乐功能：\n"
-        "• /fish - 钓鱼游戏\n\n"
+        "• /fish - 钓鱼游戏\n"
+        "• /bets - 查看投注记录\n\n"
         "⚙️ 设置命令：\n"
         "• /settings - 群组设置\n\n"
         "💡 使用说明：\n"
@@ -290,6 +301,36 @@ async def help_handler(message: Message) -> None:
         "4. 钓鱼游戏需要消耗积分",
         reply_markup=keyboard
     )
+
+@commands_router.message(Command("bets"))
+async def bets_handler(message: Message) -> None:
+    """
+    处理 /bets 命令 - 查看投注记录（第一页）
+    """
+    logger.info(f"用户 {message.from_user.id} 发送了 /bets 命令")
+    
+    # 调用彩票处理器显示第一页
+    from bot.handlers.lottery_handler import show_bets_page
+    await show_bets_page(message, message.from_user.id, 1)
+
+@commands_router.message(Command("draws"))
+async def draws_handler(message: Message) -> None:
+    """
+    处理 /draws 命令 - 查看最近开奖记录（仅管理员）
+    """
+    logger.info(f"用户 {message.from_user.id} 发送了 /draws 命令")
+    
+    # 检查管理员权限
+    from bot.config import get_config
+    config = get_config()
+    
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.reply("❌ 此命令仅限管理员使用")
+        return
+    
+    # 调用彩票处理器显示最近开奖记录
+    from bot.handlers.lottery_handler import show_recent_draws
+    await show_recent_draws(message, limit=10)
 
 @commands_router.callback_query(lambda c: c.data.startswith("fish_"))
 async def fishing_rod_callback(callback_query: CallbackQuery):
@@ -345,6 +386,31 @@ async def fishing_history_info_callback(callback_query: CallbackQuery):
         
     except Exception as e:
         logger.error(f"处理钓鱼历史信息回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data.startswith("bets_page_"))
+async def bets_page_callback(callback_query: CallbackQuery):
+    """
+    处理投注记录分页回调
+    """
+    try:
+        # 解析回调数据：bets_page_{telegram_id}_{page}
+        parts = callback_query.data.split('_')
+        telegram_id = int(parts[2])
+        page = int(parts[3])
+        
+        # 验证用户权限（只能查看自己的投注记录）
+        if callback_query.from_user.id != telegram_id:
+            await callback_query.answer("❌ 无权限查看他人投注记录")
+            return
+        
+        # 调用彩票处理器显示指定页面的投注记录
+        from bot.handlers.lottery_handler import show_bets_page
+        await show_bets_page(callback_query.message, telegram_id, page)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理投注记录分页回调失败: {e}")
         await callback_query.answer("❌ 操作失败，请重试！")
 
 

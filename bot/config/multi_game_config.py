@@ -252,18 +252,18 @@ class MultiGameConfig:
         
         # 检查投注金额
         if bet_amount < group_config.min_bet:
-            return False, f"投注金额不能少于 {group_config.min_bet}U"
+            return False, f"投注积分不能少于 {group_config.min_bet}积分"
         
         if bet_amount > group_config.max_bet:
-            return False, f"投注金额不能超过 {group_config.max_bet}U"
+            return False, f"投注积分不能超过 {group_config.max_bet}积分"
         
         # 检查投注类型
         if bet_type.isdigit() and len(bet_type) == 1:
             # 数字投注
             if bet_amount < game_config.number_min_bet:
-                return False, f"数字投注最小金额为 {game_config.number_min_bet}U"
+                return False, f"数字投注最小积分为 {game_config.number_min_bet}积分"
             if bet_amount > game_config.number_max_bet:
-                return False, f"数字投注最大金额为 {game_config.number_max_bet}U"
+                return False, f"数字投注最大积分为 {game_config.number_max_bet}积分"
         else:
             # 其他投注类型
             bet_config = game_config.bet_types.get(bet_type)
@@ -271,9 +271,9 @@ class MultiGameConfig:
                 return False, f"无效的投注类型: {bet_type}"
             
             if bet_amount < bet_config["min_bet"]:
-                return False, f"{bet_type}投注最小金额为 {bet_config['min_bet']}U"
+                return False, f"{bet_type}投注最小积分为 {bet_config['min_bet']}积分"
             if bet_amount > bet_config["max_bet"]:
-                return False, f"{bet_type}投注最大金额为 {bet_config['max_bet']}U"
+                return False, f"{bet_type}投注最大积分为 {bet_config['max_bet']}积分"
         
         return True, "投注验证通过"
     
@@ -310,7 +310,7 @@ class MultiGameConfig:
         info += f"📝 **游戏说明:** {game_config.description}\n\n"
         info += f"⏰ **开奖间隔:** 每 {game_config.draw_interval} 分钟\n"
         info += f"🕐 **下次开奖:** {next_draw.strftime('%H:%M')}\n\n"
-        info += f"💰 **投注范围:** {group_config.min_bet} - {group_config.max_bet:,} U\n"
+        info += f"💰 **投注范围:** {group_config.min_bet} - {group_config.max_bet:,} 积分\n"
         info += f"🎁 **返水比例:** {game_config.cashback_rate * 100}%\n\n"
         
         info += "📊 **投注类型与赔率:**\n\n"
@@ -336,7 +336,7 @@ class MultiGameConfig:
                 odds = game_config.bet_types[bet_type]["odds"]
                 numbers = game_config.bet_types[bet_type]["numbers"]
                 max_bet = game_config.bet_types[bet_type]["max_bet"]
-                combo_info.append(f"   {bet_type}: 数字{numbers} - 赔率{odds}倍 (最大{max_bet:,}U)")
+                combo_info.append(f"   {bet_type}: 数字{numbers} - 赔率{odds}倍 (最大{max_bet:,}积分)")
         
         if combo_info:
             info += "🔸 **组合投注:**\n"
@@ -345,7 +345,7 @@ class MultiGameConfig:
         # 数字投注
         info += f"🔸 **数字投注:**\n"
         info += f"   任意猜中具体数字 0～9 - 赔率{game_config.number_odds}倍\n"
-        info += f"   投注范围: {game_config.number_min_bet} - {game_config.number_max_bet:,} U\n\n"
+        info += f"   投注范围: {game_config.number_min_bet} - {game_config.number_max_bet:,} 积分\n\n"
         
         if group_config.admin_only:
             info += "⚠️ **仅管理员可操作**\n"

@@ -77,7 +77,7 @@ class LotteryScheduler:
         message = f"🎲 <b>第 {draw.draw_number} 期开奖结果</b> 🎲\n\n"
         message += f"🏆 <b>开奖号码: {result}</b>\n\n"
         
-        # 添加大小单双信息
+        # 添加大小单双信息（简化版）
         if result in [1, 2, 3, 4]:
             message += "📊 <b>大小单双:</b> 小"
         elif result in [6, 7, 8, 9]:
@@ -93,26 +93,24 @@ class LotteryScheduler:
             message += " 豹子"
         
         message += f"\n\n📈 <b>本期统计:</b>\n"
-        message += f"   总投注: {total_bets:,} U\n"
-        message += f"   总派奖: {total_payout:,} U\n"
+        message += f"   总投注: {total_bets:,} 积分\n"
+        message += f"   总派奖: {total_payout:,} 积分\n"
         
         # 计算盈亏
         profit = total_bets - total_payout
         if profit > 0:
-            message += f"   💰 盈利: +{profit:,} U"
+            message += f"   💰 盈利: +{profit:,} 积分"
         else:
-            message += f"   💸 亏损: {profit:,} U"
+            message += f"   💸 亏损: {profit:,} 积分"
         
-        # 获取下次开奖时间
-        next_draw = self.multi_config.get_next_draw_time(group_id)
-        message += f"\n\n⏰ <b>下期开奖:</b> {next_draw.strftime('%H:%M')}"
+        message += f"\n\n🎯 <b>下期投注即将开始...</b>"
         
         return message
     
     async def _send_new_draw_message(self, group_id: int, draw):
-        """发送新一期已开启消息和投注按钮"""
+        """发送新一期开始投注消息（不显示按钮）"""
         try:
-            logger.info(f"开始发送新一期已开启消息，群组: {group_id}, 期号: {draw.draw_number}")
+            logger.info(f"开始发送新一期开始投注消息，群组: {group_id}, 期号: {draw.draw_number}")
             from bot.misc import bot
             group_config = self.multi_config.get_group_config(group_id)
             if not group_config:
@@ -121,29 +119,29 @@ class LotteryScheduler:
             
             logger.info(f"群组配置获取成功: {group_config.group_name}, 游戏类型: {group_config.game_type}")
             
-            # 构建投注按钮（可根据实际投注类型扩展）
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text="小", callback_data=f"lottery_bet_type_{group_id}_小"),
-                        InlineKeyboardButton(text="大", callback_data=f"lottery_bet_type_{group_id}_大"),
-                        InlineKeyboardButton(text="单", callback_data=f"lottery_bet_type_{group_id}_单"),
-                        InlineKeyboardButton(text="双", callback_data=f"lottery_bet_type_{group_id}_双"),
-                    ]
-                ]
-            )
-            logger.info(f"投注按钮构建完成，callback_data示例: lottery_bet_type_{group_id}_小")
-            
             # 获取开奖间隔
             game_config = self.multi_config.get_game_config(draw.game_type)
             interval = game_config.draw_interval if game_config else 5
             logger.info(f"游戏配置获取成功，开奖间隔: {interval}分钟")
             
-            # 消息内容
+            # 消息内容 - 不显示按钮，只提示用户通过消息投注
             message = (
-                f"🎲 <b>第 {draw.draw_number} 期已开启</b>\n\n"
-                f"请在<b>{interval}分钟</b>内下注，点击下方按钮选择投注类型。\n"
-                f"⏰ 距离开奖：<b>{interval}:00</b>"
+                f"🎲 <b>第 {draw.draw_number} 期开始投注</b>\n\n"
+                f"⏰ <b>投注时间:</b> {interval}分钟\n"
+                f"💰 <b>投注方式:</b> 发送消息投注积分\n\n"
+                f"📊 <b>投注类型与赔率:</b>\n"
+                f"🔸 <b>大小单双:</b>\n"
+                f"   小(1,2,3,4) 大(6,7,8,9) 单(1,3,7,9) 双(2,4,6,8) - 2.36倍\n\n"
+                f"🔸 <b>组合投注:</b>\n"
+                f"   小单(1,3) 小双(2,4) 大单(7,9) 大双(6,8) 豹子(0,5) - 4.60倍\n\n"
+                f"🔸 <b>数字投注:</b>\n"
+                f"   0-9任意数字 - 9倍\n\n"
+                f"📝 <b>投注格式:</b>\n"
+                f"• 大1000 小500 单200\n"
+                f"• 小单100 大双200 豹子50\n"
+                f"• 数字8 押100\n\n"
+                f"💡 <b>示例:</b> 大1000 小单100 数字8 押100\n\n"
+                f"🎯 <b>开奖时间:</b> {interval}分钟后"
             )
             logger.info(f"消息内容构建完成，长度: {len(message)} 字符")
             
@@ -153,13 +151,13 @@ class LotteryScheduler:
             for target_group_id in notification_groups:
                 try:
                     logger.info(f"正在发送消息到群组 {target_group_id}...")
-                    await bot.send_message(target_group_id, message, reply_markup=keyboard, parse_mode="HTML")
-                    logger.info(f"✅ 新一期已开启消息已成功发送到群组 {target_group_id}")
+                    await bot.send_message(target_group_id, message, parse_mode="HTML")
+                    logger.info(f"✅ 新一期开始投注消息已成功发送到群组 {target_group_id}")
                 except Exception as e:
                     logger.error(f"❌ 发送新一期消息到群组 {target_group_id} 失败: {e}")
                     logger.error(f"错误详情: {type(e).__name__}: {str(e)}")
         except Exception as e:
-            logger.error(f"❌ 发送新一期已开启消息失败: {e}")
+            logger.error(f"❌ 发送新一期开始投注消息失败: {e}")
             logger.error(f"错误详情: {type(e).__name__}: {str(e)}")
             import traceback
             logger.error(f"堆栈跟踪: {traceback.format_exc()}")

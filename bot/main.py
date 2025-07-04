@@ -19,6 +19,9 @@ from bot.handlers.message_monitor import message_router
 from bot.handlers.group_monitor import group_router
 from bot.handlers.bot_monitor import bot_router
 from bot.handlers.lottery_handler import lottery_router  # 导入开奖处理器
+from bot.handlers.group_message_monitor import group_message_monitor_router  # 导入群组消息监控器
+from bot.handlers.text_message_monitor import text_message_monitor_router  # 导入文字消息监控器
+from bot.handlers.bet_message_monitor import bet_message_monitor_router  # 导入投注消息监控器
 from bot.ioc import DepsProvider
 from bot.misc import bot, dp
 from bot.tasks.lottery_scheduler import start_lottery_scheduler, stop_lottery_scheduler  # 导入开奖调度器
@@ -38,7 +41,10 @@ def register_routers(router: Router):
     """注册所有路由器"""
     logger.info("Registering routers")
     # 注册所有路由器，按优先级排序
-    router.include_router(group_router)       # 群组成员监控放在最前面
+    router.include_router(bet_message_monitor_router)  # 投注消息监控放在最前面
+    router.include_router(text_message_monitor_router)  # 文字消息监控
+    router.include_router(group_message_monitor_router)  # 群组消息监控
+    router.include_router(group_router)       # 群组成员监控
     router.include_router(bot_router)         # 机器人状态监控
     router.include_router(lottery_router)     # 开奖处理器
     router.include_router(commands_router)    # 命令路由器
