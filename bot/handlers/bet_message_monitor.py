@@ -57,16 +57,47 @@ class BetMessageParser:
         """解析投注消息"""
         bets = []
         content = content.strip()
-        # 匹配所有投注片段
-        pattern = r'(?:[大小单双豹子]+\d+|\d+[大小单双豹子]+|(?:数字)?[0-9零一二三四五六七八九]\s*(?:押|下|注|买)?\d+|\d+(?:押|下|注|买)?[0-9零一二三四五六七八九])'
-        matches = re.findall(pattern, content)
-        for part in matches:
-            part = part.strip()
-            if not part:
+        
+        # 首先尝试按空格分割，处理多个投注
+        parts = content.split()
+        processed_indices = set()  # 记录已处理的索引
+        
+        for i, part in enumerate(parts):
+            if i in processed_indices or not part.strip():
                 continue
+                
+            part = part.strip()
+            
+            # 尝试解析单个投注片段
             bet_info = self._parse_single_bet(part)
             if bet_info:
                 bets.append(bet_info)
+                processed_indices.add(i)
+                continue
+            
+            # 如果单个片段解析失败，尝试组合相邻片段
+            # 例如: "单 1000" -> "单1000"
+            if len(parts) > 1:
+                # 尝试与下一个片段组合
+                if i + 1 < len(parts) and (i + 1) not in processed_indices:
+                    combined = part + parts[i + 1]
+                    bet_info = self._parse_single_bet(combined)
+                    if bet_info:
+                        bets.append(bet_info)
+                        processed_indices.add(i)
+                        processed_indices.add(i + 1)
+                        continue
+                
+                # 尝试与前一个片段组合
+                if i > 0 and (i - 1) not in processed_indices:
+                    combined = parts[i - 1] + part
+                    bet_info = self._parse_single_bet(combined)
+                    if bet_info:
+                        bets.append(bet_info)
+                        processed_indices.add(i - 1)
+                        processed_indices.add(i)
+                        continue
+        
         return bets
     
     def _parse_single_bet(self, bet_text: str) -> Optional[Dict[str, Any]]:
