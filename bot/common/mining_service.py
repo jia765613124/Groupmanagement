@@ -661,4 +661,93 @@ class MiningService:
                 "success": False,
                 "reward_points": 0,
                 "error": str(e)
+            }
+    
+    async def get_mining_history(self, telegram_id: int, page: int = 1, limit: int = 10) -> Dict:
+        """
+        获取挖矿历史记录（分页）
+        
+        Args:
+            telegram_id: Telegram用户ID
+            page: 页码（从1开始）
+            limit: 每页记录数
+            
+        Returns:
+            挖矿历史记录字典
+        """
+        try:
+            async with self.uow:
+                # 计算偏移量
+                offset = (page - 1) * limit
+                
+                # 获取挖矿奖励历史
+                rewards = await mining_reward.get_reward_history(
+                    self.uow.session,
+                    telegram_id=telegram_id,
+                    skip=offset,
+                    limit=limit
+                )
+                
+                # 获取总记录数
+                total_count = await mining_reward.get_reward_history_count(
+                    self.uow.session,
+                    telegram_id=telegram_id
+                )
+                
+                # 计算总页数
+                total_pages = (total_count + limit - 1) // limit
+                
+                # 获取挖矿统计信息
+                stats = await mining_statistics.get_or_create_statistics(
+                    self.uow.session,
+                    telegram_id=telegram_id
+                )
+                
+                # 转换为字典格式
+                rewards_list = []
+                for reward in rewards:
+                    rewards_list.append({
+                        "id": reward.id,
+                        "mining_card_id": reward.mining_card_id,
+                        "card_type": reward.card_type,
+                        "reward_points": reward.reward_points,
+                        "reward_day": reward.reward_day,
+                        "reward_date": reward.reward_date.strftime('%Y-%m-%d %H:%M:%S'),
+                        "status": reward.status,
+                        "claimed_time": reward.claimed_time.strftime('%Y-%m-%d %H:%M:%S') if reward.claimed_time else None,
+                        "remarks": reward.remarks
+                    })
+                
+                # 构建统计信息
+                statistics = {
+                    "total_cards_purchased": stats.total_cards_purchased,
+                    "total_cost_usdt": float(stats.total_cost_usdt) / 10000,  # 转换为USDT显示
+                    "total_earned_points": stats.total_earned_points,
+                    "bronze_cards": stats.bronze_cards,
+                    "silver_cards": stats.silver_cards,
+                    "gold_cards": stats.gold_cards,
+                    "diamond_cards": stats.diamond_cards,
+                    "last_mining_time": stats.last_mining_time.strftime('%Y-%m-%d %H:%M:%S') if stats.last_mining_time else None
+                }
+                
+                return {
+                    "success": True,
+                    "message": "",
+                    "rewards": rewards_list,
+                    "statistics": statistics,
+                    "total_count": total_count,
+                    "current_page": page,
+                    "total_pages": max(1, total_pages)
+                }
+                
+        except Exception as e:
+            logger.error(f"获取挖矿历史记录失败: {e}")
+            return {
+                "success": False,
+                "message": "获取历史记录失败，请稍后重试",
+                "rewards": [],
+                "statistics": {},
+                "total_count": 0,
+                "current_page": page,
+                "total_pages": 1
             } 

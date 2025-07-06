@@ -656,4 +656,57 @@ async def mining_manage_info_callback(callback_query: CallbackQuery):
         logger.error(f"处理矿工卡管理信息回调失败: {e}")
         await callback_query.answer("❌ 操作失败，请重试！")
 
+@commands_router.callback_query(lambda c: c.data == "mining_history")
+async def mining_history_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿历史回调
+    """
+    try:
+        # 调用挖矿处理器显示挖矿历史界面
+        from bot.handlers.mining_handler import show_mining_history
+        
+        await show_mining_history(callback_query.message, callback_query.from_user.id)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理挖矿历史回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data.startswith("mining_history_page_"))
+async def mining_history_page_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿历史分页回调
+    """
+    try:
+        # 解析回调数据：mining_history_page_{telegram_id}_{page}
+        parts = callback_query.data.split('_')
+        telegram_id = int(parts[3])
+        page = int(parts[4])
+        
+        # 验证用户权限（只能查看自己的历史）
+        if callback_query.from_user.id != telegram_id:
+            await callback_query.answer("❌ 无权限查看他人历史记录")
+            return
+        
+        # 调用挖矿处理器显示指定页面的历史记录
+        from bot.handlers.mining_handler import show_mining_history
+        await show_mining_history(callback_query.message, telegram_id, page)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理挖矿历史分页回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data == "mining_history_info")
+async def mining_history_info_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿历史信息回调（页码信息）
+    """
+    try:
+        await callback_query.answer("📄 当前页面信息")
+        
+    except Exception as e:
+        logger.error(f"处理挖矿历史信息回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
 

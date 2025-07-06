@@ -426,6 +426,19 @@ class CRUDMiningReward(CRUDBase[MiningReward]):
         ).order_by(MiningReward.reward_date.desc()).offset(skip).limit(limit)
         result = await session.execute(stmt)
         return result.scalars().all()
+    
+    async def get_reward_history_count(
+        self,
+        session: AsyncSession,
+        *,
+        telegram_id: int
+    ) -> int:
+        """获取挖矿奖励历史总数"""
+        stmt = select(func.count(MiningReward.id)).where(
+            MiningReward.telegram_id == telegram_id
+        )
+        result = await session.execute(stmt)
+        return result.scalar() or 0
 
 
 class CRUDMiningStatistics(CRUDBase[MiningStatistics]):

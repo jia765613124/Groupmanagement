@@ -269,6 +269,43 @@ async def show_mining_management(message, telegram_id: int, page: int = 1):
         logger.error(f"显示矿工卡管理界面失败: {e}")
         await message.answer("❌ 系统错误，请稍后重试")
 
+async def show_mining_history(message, telegram_id: int, page: int = 1):
+    """
+    显示挖矿历史界面（供 aiogram 调用）
+    支持分页显示，每页显示10条历史记录
+    """
+    try:
+        mining_service = await get_mining_service()
+        
+        # 获取挖矿历史记录
+        history_result = await mining_service.get_mining_history(
+            telegram_id=telegram_id, 
+            page=page, 
+            limit=10
+        )
+        
+        if not history_result["success"]:
+            await message.answer(f"❌ {history_result['message']}")
+            return
+        
+        # 构建挖矿历史界面消息
+        message_text = _build_mining_history_message(history_result)
+        
+        # 构建挖矿历史按钮（分页）
+        keyboard = _build_mining_history_keyboard(history_result, telegram_id)
+        
+        try:
+            # 尝试编辑消息
+            await message.edit_text(message_text, reply_markup=keyboard)
+        except Exception as edit_error:
+            # 如果编辑失败，则发送新消息
+            logger.info(f"无法编辑消息，发送新消息: {edit_error}")
+            await message.answer(message_text, reply_markup=keyboard)
+        
+    except Exception as e:
+        logger.error(f"显示挖矿历史界面失败: {e}")
+        await message.answer("❌ 系统错误，请稍后重试")
+
 def _build_mining_interface_message(mining_info: dict) -> str:
     """构建挖矿界面消息"""
     wallet_balance = mining_info["wallet_balance"]
@@ -315,6 +352,12 @@ def _build_mining_menu_keyboard(mining_info: dict):
             text=f"🎁 领取奖励 ({mining_info['pending_rewards']}笔)",
             callback_data="mining_rewards"
         )])
+    
+    # 添加挖矿历史按钮
+    buttons.append([InlineKeyboardButton(
+        text="📜 挖矿历史",
+        callback_data="mining_history"
+    )])
     
     # 返回按钮
     buttons.append([InlineKeyboardButton(
@@ -620,6 +663,99 @@ def _build_mining_management_keyboard(user_cards_result: dict, telegram_id: int)
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+def _build_mining_history_message(history_result: dict) -> str:
+    """构建挖矿历史消息"""
+    rewards = history_result["rewards"]
+    statistics = history_result["statistics"]
+    total_count = history_result["total_count"]
+    current_page = history_result["current_page"]
+    total_pages = history_result["total_pages"]
+    
+    message = f"📜 **挖矿历史记录**\n\n"
+    
+    # 添加统计信息
+    message += f"📊 **挖矿统计**\n"
+    message += f"💰 总花费: **{statistics['total_cost_usdt']:.2f}U**\n"
+    message += f"💎 总获得积分: **{statistics['total_earned_points']:,}**\n"
+    message += f"🔧 总购买矿工卡: **{statistics['total_cards_purchased']}** 张\n"
+    message += f"🟤 青铜矿工卡: **{statistics['bronze_cards']}** 张\n"
+    message += f"⚪ 白银矿工卡: **{statistics['silver_cards']}** 张\n"
+    message += f"🟡 黄金矿工卡: **{statistics['gold_cards']}** 张\n"
+    message += f"💎 钻石矿工卡: **{statistics['diamond_cards']}** 张\n"
+    
+    if statistics.get('last_mining_time'):
+        message += f"⏰ 最后挖矿时间: {statistics['last_mining_time'][:10]}\n\n"
+    else:
+        message += "\n"
+    
+    # 添加奖励历史记录
+    if not rewards:
+        message += "暂无挖矿历史记录\n\n"
+    else:
+        message += f"**历史记录** (共 {total_count} 条)\n\n"
+        
+        for i, reward in enumerate(rewards, 1):
+            status_emoji = "✅" if reward["status"] == 2 else "⏳"
+            status_text = "已领取" if reward["status"] == 2 else "待领取"
+            
+            message += f"{i}. {status_emoji} {reward['card_type']}矿工卡\n"
+            message += f"   💰 奖励积分: {reward['reward_points']:,}\n"
+            message += f"   📅 第{reward['reward_day']}天奖励\n"
+            message += f"   🕐 奖励日期: {reward['reward_date'][:10]}\n"
+            
+            if reward["status"] == 2 and reward["claimed_time"]:
+                message += f"   ✅ 领取时间: {reward['claimed_time'][:10]}\n"
+            
+            message += f"   📝 状态: {status_text}\n\n"
+    
+    if total_pages > 1:
+        message += f"📄 第 {current_page} 页，共 {total_pages} 页"
+    
+    return message
+
+def _build_mining_history_keyboard(history_result: dict, telegram_id: int):
+    """构建挖矿历史分页键盘"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    buttons = []
+    
+    # 分页按钮
+    current_page = history_result["current_page"]
+    total_pages = history_result["total_pages"]
+    
+    if total_pages > 1:
+        row = []
+        
+        # 上一页按钮
+        if current_page > 1:
+            row.append(InlineKeyboardButton(
+                text="⬅️ 上一页",
+                callback_data=f"mining_history_page_{telegram_id}_{current_page - 1}"
+            ))
+        
+        # 页码信息
+        row.append(InlineKeyboardButton(
+            text=f"📄 {current_page}/{total_pages}",
+            callback_data="mining_history_info"
+        ))
+        
+        # 下一页按钮
+        if current_page < total_pages:
+            row.append(InlineKeyboardButton(
+                text="下一页 ➡️",
+                callback_data=f"mining_history_page_{telegram_id}_{current_page + 1}"
+            ))
+        
+        buttons.append(row)
+    
+    # 返回按钮
+    buttons.append([InlineKeyboardButton(
+        text="🔙 返回挖矿菜单",
+        callback_data="mining_menu"
+    )])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 # 保留原有的 Telethon 处理器类（如果需要的话）
 class MiningHandler:
     """挖矿处理器（Telethon 版本）"""
@@ -692,6 +828,8 @@ class MiningHandler:
                 await self._handle_rewards_callback(event)
             elif callback_data.startswith("mining_claim_all"):
                 await self._handle_claim_callback(event)
+            elif callback_data.startswith("mining_history"):
+                await self._handle_history_callback(event)
             else:
                 await event.answer("未知的回调操作")
             
@@ -801,6 +939,35 @@ class MiningHandler:
             logger.error(f"处理领取回调失败: {e}")
             await event.answer("❌ 领取失败，请稍后重试")
     
+    async def _handle_history_callback(self, event):
+        """处理挖矿历史回调"""
+        try:
+            telegram_id = event.sender_id
+            
+            # 获取挖矿历史记录
+            mining_service = await self._get_mining_service()
+            history_result = await mining_service.get_mining_history(
+                telegram_id=telegram_id, 
+                page=1, 
+                limit=10
+            )
+            
+            if not history_result["success"]:
+                await event.answer(f"❌ {history_result['message']}")
+                return
+            
+            # 构建挖矿历史界面消息
+            message = self._build_mining_history_message(history_result)
+            
+            # 构建挖矿历史按钮（分页）
+            keyboard = self._build_mining_history_keyboard(history_result, telegram_id)
+            
+            await event.edit(message, buttons=keyboard)
+            
+        except Exception as e:
+            logger.error(f"处理挖矿历史回调失败: {e}")
+            await event.answer("❌ 获取历史记录失败，请稍后重试")
+    
     def _build_mining_interface_message(self, mining_info: dict) -> str:
         """构建挖矿界面消息"""
         wallet_balance = mining_info["wallet_balance"]
@@ -835,12 +1002,24 @@ class MiningHandler:
             data="mining_cards".encode()
         )])
         
+        # 管理矿工卡按钮
+        buttons.append([KeyboardButtonCallback(
+            text="📊 管理矿工卡",
+            data="mining_management".encode()
+        )])
+        
         # 领取奖励按钮（如果有待领取的奖励）
         if mining_info["pending_rewards"] > 0:
             buttons.append([KeyboardButtonCallback(
                 text=f"🎁 领取奖励 ({mining_info['pending_rewards']}笔)",
                 data="mining_rewards".encode()
             )])
+        
+        # 添加挖矿历史按钮
+        buttons.append([KeyboardButtonCallback(
+            text="📜 挖矿历史",
+            data="mining_history".encode()
+        )])
         
         return buttons
     
@@ -952,4 +1131,97 @@ class MiningHandler:
             for reward in claimed_rewards:
                 message += f"⛏️ {reward['card_type']}矿工卡 - 第{reward['reward_day']}天 - {reward['reward_points']:,}积分\n"
         
-        return message 
+        return message
+    
+    def _build_mining_history_message(self, history_result: dict) -> str:
+        """构建挖矿历史消息"""
+        rewards = history_result["rewards"]
+        statistics = history_result["statistics"]
+        total_count = history_result["total_count"]
+        current_page = history_result["current_page"]
+        total_pages = history_result["total_pages"]
+        
+        message = f"📜 **挖矿历史记录**\n\n"
+        
+        # 添加统计信息
+        message += f"📊 **挖矿统计**\n"
+        message += f"💰 总花费: **{statistics['total_cost_usdt']:.2f}U**\n"
+        message += f"💎 总获得积分: **{statistics['total_earned_points']:,}**\n"
+        message += f"🔧 总购买矿工卡: **{statistics['total_cards_purchased']}** 张\n"
+        message += f"🟤 青铜矿工卡: **{statistics['bronze_cards']}** 张\n"
+        message += f"⚪ 白银矿工卡: **{statistics['silver_cards']}** 张\n"
+        message += f"🟡 黄金矿工卡: **{statistics['gold_cards']}** 张\n"
+        message += f"💎 钻石矿工卡: **{statistics['diamond_cards']}** 张\n"
+        
+        if statistics.get('last_mining_time'):
+            message += f"⏰ 最后挖矿时间: {statistics['last_mining_time'][:10]}\n\n"
+        else:
+            message += "\n"
+        
+        # 添加奖励历史记录
+        if not rewards:
+            message += "暂无挖矿历史记录\n\n"
+        else:
+            message += f"**历史记录** (共 {total_count} 条)\n\n"
+            
+            for i, reward in enumerate(rewards, 1):
+                status_emoji = "✅" if reward["status"] == 2 else "⏳"
+                status_text = "已领取" if reward["status"] == 2 else "待领取"
+                
+                message += f"{i}. {status_emoji} {reward['card_type']}矿工卡\n"
+                message += f"   💰 奖励积分: {reward['reward_points']:,}\n"
+                message += f"   📅 第{reward['reward_day']}天奖励\n"
+                message += f"   🕐 奖励日期: {reward['reward_date'][:10]}\n"
+                
+                if reward["status"] == 2 and reward["claimed_time"]:
+                    message += f"   ✅ 领取时间: {reward['claimed_time'][:10]}\n"
+                
+                message += f"   📝 状态: {status_text}\n\n"
+        
+        if total_pages > 1:
+            message += f"📄 第 {current_page} 页，共 {total_pages} 页"
+        
+        return message
+    
+    def _build_mining_history_keyboard(self, history_result: dict, telegram_id: int):
+        """构建挖矿历史分页键盘"""
+        from telethon.tl.types import KeyboardButtonCallback
+        
+        buttons = []
+        
+        # 分页按钮
+        current_page = history_result["current_page"]
+        total_pages = history_result["total_pages"]
+        
+        if total_pages > 1:
+            row = []
+            
+            # 上一页按钮
+            if current_page > 1:
+                row.append(KeyboardButtonCallback(
+                    text="⬅️ 上一页",
+                    data=f"mining_history_page_{telegram_id}_{current_page - 1}".encode()
+                ))
+            
+            # 页码信息
+            row.append(KeyboardButtonCallback(
+                text=f"📄 {current_page}/{total_pages}",
+                data="mining_history_info".encode()
+            ))
+            
+            # 下一页按钮
+            if current_page < total_pages:
+                row.append(KeyboardButtonCallback(
+                    text="下一页 ➡️",
+                    data=f"mining_history_page_{telegram_id}_{current_page + 1}".encode()
+                ))
+            
+            buttons.append(row)
+        
+        # 返回按钮
+        buttons.append([KeyboardButtonCallback(
+            text="🔙 返回挖矿菜单",
+            data="mining_menu".encode()
+        )])
+        
+        return buttons 
