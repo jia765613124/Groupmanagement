@@ -21,6 +21,7 @@ BASIC_COMMANDS = [
     BotCommand(command="start", description="开始使用"),
     BotCommand(command="help", description="获取帮助信息"),
     BotCommand(command="fish", description="🎣 钓鱼游戏"),
+    BotCommand(command="mining", description="⛏️ 挖矿游戏"),
     BotCommand(command="bets", description="🎲 查看投注记录"),
 ]
 
@@ -75,6 +76,12 @@ async def command_start_handler(message: Message) -> None:
                     callback_data="fishing_menu"
                 ),
                 InlineKeyboardButton(
+                    text="⛏️ 挖矿游戏",
+                    callback_data="mining_menu"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="📚 查看帮助",
                     callback_data="show_help"
                 )
@@ -90,7 +97,8 @@ async def command_start_handler(message: Message) -> None:
         "• 消息管理：置顶、删除\n"
         "• 警告系统：警告、撤销警告\n"
         "• 群组设置：权限、规则等\n"
-        "• 🎣 钓鱼游戏：娱乐功能\n\n"
+        "• 🎣 钓鱼游戏：娱乐功能\n"
+        "• ⛏️ 挖矿游戏：娱乐功能\n\n"
         "点击下方按钮开始使用：",
         reply_markup=keyboard
     )
@@ -137,6 +145,17 @@ async def fish_command_handler(message: Message) -> None:
         reply_markup=keyboard
     )
 
+@commands_router.message(Command("mining"))
+async def mining_command_handler(message: Message) -> None:
+    """
+    处理 /mining 命令 - 直接进入挖矿菜单
+    """
+    logger.info(f"用户 {message.from_user.id} 发送了 /mining 命令")
+    
+    # 调用挖矿处理器显示挖矿菜单
+    from bot.handlers.mining_handler import show_mining_menu
+    await show_mining_menu(message, message.from_user.id)
+
 @commands_router.callback_query(lambda c: c.data == "fishing_menu")
 async def fishing_menu_callback(callback_query: CallbackQuery):
     """
@@ -152,6 +171,22 @@ async def fishing_menu_callback(callback_query: CallbackQuery):
         
     except Exception as e:
         logger.error(f"处理钓鱼菜单回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data == "mining_menu")
+async def mining_menu_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿菜单回调
+    """
+    try:
+        # 调用挖矿处理器显示挖矿菜单
+        from bot.handlers.mining_handler import show_mining_menu
+        
+        await show_mining_menu(callback_query.message, callback_query.from_user.id)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理挖矿菜单回调失败: {e}")
         await callback_query.answer("❌ 操作失败，请重试！")
 
 @commands_router.callback_query(lambda c: c.data == "fishing_history")
@@ -184,6 +219,12 @@ async def show_help_callback(callback_query: CallbackQuery):
                         callback_data="fishing_menu"
                     ),
                     InlineKeyboardButton(
+                        text="⛏️ 挖矿游戏",
+                        callback_data="mining_menu"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
                         text="🔙 返回主菜单",
                         callback_data="back_to_main"
                     )
@@ -205,7 +246,8 @@ async def show_help_callback(callback_query: CallbackQuery):
             "• /pin - 置顶消息\n"
             "• /unpin - 取消置顶\n\n"
             "🎣 娱乐功能：\n"
-            "• /fish - 钓鱼游戏\n\n"
+            "• /fish - 钓鱼游戏\n"
+            "• /mining - 挖矿游戏\n\n"
             "⚙️ 设置命令：\n"
             "• /settings - 群组设置\n\n"
             "💡 使用说明：\n"
@@ -234,6 +276,12 @@ async def back_to_main_callback(callback_query: CallbackQuery):
                         callback_data="fishing_menu"
                     ),
                     InlineKeyboardButton(
+                        text="⛏️ 挖矿游戏",
+                        callback_data="mining_menu"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
                         text="📚 查看帮助",
                         callback_data="show_help"
                     )
@@ -244,12 +292,13 @@ async def back_to_main_callback(callback_query: CallbackQuery):
         await callback_query.message.edit_text(
             "👋 欢迎使用群管理机器人！\n\n"
             "🤖 我是一个功能强大的群管理助手，可以帮助你管理群组。\n\n"
-            "📚 主要功能：\n"
-            "• 用户管理：封禁、解封、禁言、踢出\n"
-            "• 消息管理：置顶、删除\n"
-            "• 警告系统：警告、撤销警告\n"
-            "• 群组设置：权限、规则等\n"
-            "• 🎣 钓鱼游戏：娱乐功能\n\n"
+                    "📚 主要功能：\n"
+        "• 用户管理：封禁、解封、禁言、踢出\n"
+        "• 消息管理：置顶、删除\n"
+        "• 警告系统：警告、撤销警告\n"
+        "• 群组设置：权限、规则等\n"
+        "• 🎣 钓鱼游戏：娱乐功能\n"
+        "• ⛏️ 挖矿游戏：娱乐功能\n\n"
             "点击下方按钮开始使用：",
             reply_markup=keyboard
         )
@@ -291,6 +340,7 @@ async def help_handler(message: Message) -> None:
         "• /unpin - 取消置顶\n\n"
         "🎣 娱乐功能：\n"
         "• /fish - 钓鱼游戏\n"
+        "• /mining - 挖矿游戏\n"
         "• /bets - 查看投注记录\n\n"
         "⚙️ 设置命令：\n"
         "• /settings - 群组设置\n\n"
@@ -411,6 +461,199 @@ async def bets_page_callback(callback_query: CallbackQuery):
         
     except Exception as e:
         logger.error(f"处理投注记录分页回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+# 挖矿相关回调处理器
+@commands_router.callback_query(lambda c: c.data == "mining_cards")
+async def mining_cards_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿卡选择回调
+    """
+    try:
+        # 调用挖矿处理器显示矿工卡选择界面
+        from bot.handlers.mining_handler import show_mining_cards
+        
+        await show_mining_cards(callback_query.message, callback_query.from_user.id)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理挖矿卡选择回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data.startswith("mining_purchase_"))
+async def mining_purchase_callback(callback_query: CallbackQuery):
+    """
+    处理购买矿工卡回调
+    """
+    try:
+        # 解析矿工卡类型
+        card_type = callback_query.data.split('_')[2]
+        
+        # 调用挖矿处理器处理购买逻辑
+        from bot.handlers.mining_handler import handle_mining_purchase_callback
+        
+        await handle_mining_purchase_callback(callback_query, card_type)
+        
+    except Exception as e:
+        logger.error(f"处理购买矿工卡回调失败: {e}")
+        await callback_query.answer("❌ 购买失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data == "mining_rewards")
+async def mining_rewards_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿奖励回调
+    """
+    try:
+        # 调用挖矿处理器显示待领取奖励
+        from bot.handlers.mining_handler import show_pending_rewards
+        
+        await show_pending_rewards(callback_query.message, callback_query.from_user.id)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理挖矿奖励回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data == "mining_claim_all")
+async def mining_claim_all_callback(callback_query: CallbackQuery):
+    """
+    处理领取所有挖矿奖励回调
+    """
+    try:
+        # 调用挖矿处理器处理领取奖励
+        from bot.handlers.mining_handler import handle_claim_rewards_callback
+        
+        await handle_claim_rewards_callback(callback_query)
+        
+    except Exception as e:
+        logger.error(f"处理领取挖矿奖励回调失败: {e}")
+        await callback_query.answer("❌ 领取失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data.startswith("mining_rewards_page_"))
+async def mining_rewards_page_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿奖励分页回调
+    """
+    try:
+        # 解析回调数据：mining_rewards_page_{telegram_id}_{page}
+        parts = callback_query.data.split('_')
+        telegram_id = int(parts[3])
+        page = int(parts[4])
+        
+        # 验证用户权限（只能查看自己的奖励）
+        if callback_query.from_user.id != telegram_id:
+            await callback_query.answer("❌ 无权限查看他人奖励")
+            return
+        
+        # 调用挖矿处理器显示指定页面的奖励
+        from bot.handlers.mining_handler import show_pending_rewards
+        await show_pending_rewards(callback_query.message, telegram_id, page)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理挖矿奖励分页回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data == "mining_rewards_info")
+async def mining_rewards_info_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿奖励信息回调（页码信息）
+    """
+    try:
+        await callback_query.answer("📄 当前页面信息")
+        
+    except Exception as e:
+        logger.error(f"处理挖矿奖励信息回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data.startswith("mining_cards_page_"))
+async def mining_cards_page_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿卡分页回调
+    """
+    try:
+        # 解析回调数据：mining_cards_page_{telegram_id}_{page}
+        parts = callback_query.data.split('_')
+        telegram_id = int(parts[3])
+        page = int(parts[4])
+        
+        # 验证用户权限（只能查看自己的矿工卡）
+        if callback_query.from_user.id != telegram_id:
+            await callback_query.answer("❌ 无权限查看他人矿工卡")
+            return
+        
+        # 调用挖矿处理器显示指定页面的矿工卡
+        from bot.handlers.mining_handler import show_mining_cards
+        await show_mining_cards(callback_query.message, telegram_id, page)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理挖矿卡分页回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data == "mining_cards_info")
+async def mining_cards_info_callback(callback_query: CallbackQuery):
+    """
+    处理挖矿卡信息回调（页码信息）
+    """
+    try:
+        await callback_query.answer("📄 当前页面信息")
+        
+    except Exception as e:
+        logger.error(f"处理挖矿卡信息回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data == "mining_management")
+async def mining_management_callback(callback_query: CallbackQuery):
+    """
+    处理矿工卡管理回调
+    """
+    try:
+        # 调用挖矿处理器显示管理界面
+        from bot.handlers.mining_handler import show_mining_management
+        
+        await show_mining_management(callback_query.message, callback_query.from_user.id)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理矿工卡管理回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data.startswith("mining_manage_page_"))
+async def mining_manage_page_callback(callback_query: CallbackQuery):
+    """
+    处理矿工卡管理分页回调
+    """
+    try:
+        # 解析回调数据：mining_manage_page_{telegram_id}_{page}
+        parts = callback_query.data.split('_')
+        telegram_id = int(parts[3])
+        page = int(parts[4])
+        
+        # 验证用户权限（只能查看自己的矿工卡）
+        if callback_query.from_user.id != telegram_id:
+            await callback_query.answer("❌ 无权限查看他人矿工卡")
+            return
+        
+        # 调用挖矿处理器显示指定页面的管理界面
+        from bot.handlers.mining_handler import show_mining_management
+        await show_mining_management(callback_query.message, telegram_id, page)
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"处理矿工卡管理分页回调失败: {e}")
+        await callback_query.answer("❌ 操作失败，请重试！")
+
+@commands_router.callback_query(lambda c: c.data == "mining_manage_info")
+async def mining_manage_info_callback(callback_query: CallbackQuery):
+    """
+    处理矿工卡管理信息回调（页码信息）
+    """
+    try:
+        await callback_query.answer("📄 当前页面信息")
+        
+    except Exception as e:
+        logger.error(f"处理矿工卡管理信息回调失败: {e}")
         await callback_query.answer("❌ 操作失败，请重试！")
 
 

@@ -5,11 +5,15 @@ from .fields import (
 from .account import Account
 from .account_transaction import AccountTransaction
 from .recharge_order import RechargeOrder
+from .mining import MiningCard, MiningReward, MiningStatistics
 
 __all__ = [
     'Base',
     'is_deleted', 'timestamp', 'deleted_at',
     'Account',
     'AccountTransaction',
-    'RechargeOrder'
+    'RechargeOrder',
+    'MiningCard',
+    'MiningReward',
+    'MiningStatistics'
 ]

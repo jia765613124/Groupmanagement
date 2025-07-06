@@ -25,6 +25,7 @@ from bot.handlers.bet_message_monitor import bet_message_monitor_router  # 导�
 from bot.ioc import DepsProvider
 from bot.misc import bot, dp
 from bot.tasks.lottery_scheduler import start_lottery_scheduler, stop_lottery_scheduler  # 导入开奖调度器
+from bot.tasks.mining_scheduler import start_mining_scheduler, stop_mining_scheduler  # 导入挖矿调度器
 from bot.utils import setup_logging
 from bot.states import Menu
 
@@ -98,6 +99,13 @@ async def start_pooling():
     except Exception as e:
         logger.error(f"Failed to start lottery scheduler: {e}")
 
+    # 启动挖矿调度器
+    try:
+        asyncio.create_task(start_mining_scheduler())
+        logger.info("Started mining scheduler task")
+    except Exception as e:
+        logger.error(f"Failed to start mining scheduler: {e}")
+
     await dp.start_polling(bot, skip_updates=True)
 
 
@@ -117,10 +125,17 @@ async def setup_webhook(bot: Bot):
         logger.warning(f"Failed to setup bot commands: {e}")
 
     # 启动开奖调度器
+    # try:
+    #     asyncio.create_task(start_lottery_scheduler())
+    #     logger.info("Started lottery scheduler task")
+    # except Exception as e:
+    #     logger.error(f"Failed to start lottery scheduler: {e}")
+
+    # 启动挖矿调度器
     try:
-        asyncio.create_task(start_lottery_scheduler())
-        logger.info("Started lottery scheduler task")
+        asyncio.create_task(start_mining_scheduler())
+        logger.info("Started mining scheduler task")
     except Exception as e:
-        logger.error(f"Failed to start lottery scheduler: {e}")
+        logger.error(f"Failed to start mining scheduler: {e}")
 
     await bot.set_webhook(config.WEBHOOK_URL, secret_token=config.BOT_SECRET_TOKEN)
