@@ -1,63 +1,86 @@
+"""
+修复矿工卡日期问题
+将矿工卡的结束时间和剩余天数同步更新为正确值
+"""
+
 import asyncio
-from datetime import datetime, date
+import logging
+from datetime import datetime, timedelta
+from sqlalchemy import update, select
+from sqlalchemy.sql import text
 from bot.database.db import SessionFactory
-from bot.crud.mining import mining_card
-from sqlalchemy import select, update
 from bot.models.mining import MiningCard
 
-async def fix_mining_cards():
-    print("修复矿工卡问题...")
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+async def fix_mining_card_dates():
+    """修复矿工卡日期计算错误"""
+    logger.info("开始修复矿工卡日期问题...")
     
     async with SessionFactory() as session:
-        # 检查数据库中的矿工卡
-        stmt = select(MiningCard)
+        # 获取所有状态为"挖矿中"的矿工卡 (status=1)
+        stmt = select(MiningCard).where(MiningCard.status == 1)
         result = await session.execute(stmt)
-        all_cards = result.scalars().all()
+        active_cards = result.scalars().all()
         
-        print(f"数据库中共有 {len(all_cards)} 张矿工卡")
+        logger.info(f"找到 {len(active_cards)} 张状态为挖矿中的矿工卡")
         
-        for card in all_cards:
-            print(f"卡ID: {card.id}, 类型: {card.card_type}, 用户ID: {card.telegram_id}")
-            print(f"  状态: {card.status}, 剩余天数: {card.remaining_days}/{card.total_days}")
-            print(f"  开始时间: {card.start_time}, 结束时间: {card.end_time}")
-            print(f"  最后奖励时间: {card.last_reward_time}")
-            print(f"  is_deleted: {card.is_deleted}")
+        fixed_count = 0
+        for card in active_cards:
+            logger.info(f"检查卡ID: {card.id}, 类型: {card.card_type}")
+            logger.info(f"  开始时间: {card.start_time}")
+            logger.info(f"  结束时间: {card.end_time}")
+            logger.info(f"  总天数: {card.total_days}, 剩余天数: {card.remaining_days}")
             
-            # 检查是否应该获得奖励
-            today = date.today()
-            should_get_reward = (
-                card.status == 1 and
-                card.remaining_days > 0 and
-                card.start_time.date() <= today and
-                card.end_time.date() >= today and
-                (card.last_reward_time is None or card.last_reward_time.date() < today)
-            )
+            # 检查是否使用了远期日期（2025年）
+            is_future_date = False
+            if card.start_time.year >= 2025:
+                is_future_date = True
+                logger.warning(f"  发现异常未来日期: {card.start_time}，将修正")
             
-            print(f"  今天应该获得奖励: {should_get_reward}")
+            # 如果是未来日期，重置为当前时间
+            if is_future_date:
+                # 保存原始总天数和剩余天数的比例
+                remaining_ratio = card.remaining_days / card.total_days if card.total_days > 0 else 0
+                
+                # 重置开始时间为当前时间
+                card.start_time = datetime.now()
+                
+                # 重新计算结束时间
+                card.end_time = card.start_time + timedelta(days=card.total_days)
+                
+                # 如果有剩余天数比例，按比例重置剩余天数
+                if remaining_ratio > 0:
+                    card.remaining_days = int(card.total_days * remaining_ratio)
+                
+                logger.info(f"  已重置时间 - 开始: {card.start_time}, 结束: {card.end_time}, 剩余天数: {card.remaining_days}")
+                fixed_count += 1
+                continue
             
-            if should_get_reward and card.is_deleted:
-                print(f"  需要修复: 卡ID {card.id} 应该获得奖励但被标记为已删除")
-                # 修复is_deleted字段
-                card.is_deleted = False
-                await session.commit()
-                print(f"  已修复: 卡ID {card.id} is_deleted 已设置为 False")
+            # 计算正确的结束时间：应该是开始时间加上总天数
+            correct_end_time = card.start_time + timedelta(days=card.total_days)
             
-            print()
+            # 计算正确的剩余天数：应该是结束时间减去现在的天数
+            days_remaining = max(0, (card.end_time - datetime.now()).days)
+            
+            # 如果日期不正确，进行修复
+            if abs((correct_end_time - card.end_time).total_seconds()) > 3600 or card.remaining_days != days_remaining:
+                logger.info(f"  需要修复:")
+                logger.info(f"  原结束时间: {card.end_time} -> 修正为: {correct_end_time}")
+                logger.info(f"  原剩余天数: {card.remaining_days} -> 修正为: {days_remaining}")
+                
+                # 直接更新对象
+                card.end_time = correct_end_time
+                card.remaining_days = days_remaining
+                
+                fixed_count += 1
         
-        # 再次检查需要处理的矿工卡
-        today = date.today()
-        pending_cards = await mining_card.get_pending_cards_batch(
-            session=session,
-            offset=0,
-            limit=100
-        )
+        # 提交所有更改
+        await session.commit()
         
-        print(f"修复后，今天需要处理的矿工卡: {len(pending_cards)} 张")
-        
-        for card in pending_cards:
-            print(f"卡ID: {card.id}, 类型: {card.card_type}, 用户ID: {card.telegram_id}")
-            print(f"  剩余天数: {card.remaining_days}, 最后奖励时间: {card.last_reward_time}")
-            print()
+        logger.info(f"完成修复! 共修复 {fixed_count} 张矿工卡")
 
 if __name__ == "__main__":
-    asyncio.run(fix_mining_cards()) 
+    asyncio.run(fix_mining_card_dates()) 

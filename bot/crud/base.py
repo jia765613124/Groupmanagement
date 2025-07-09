@@ -1,3 +1,9 @@
+"""
+CRUD 基类模块
+
+提供基本的数据库操作功能。
+"""
+
 from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, Union
 from sqlalchemy import select, update, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,7 +87,8 @@ class CRUDBase(Service[ModelType], Generic[ModelType]):
         session: AsyncSession,
         *,
         db_obj: ModelType,
-        obj_in: Union[Dict[str, Any], ModelType]
+        obj_in: Union[Dict[str, Any], ModelType],
+        exclude_fields: List[str] = None
     ) -> ModelType:
         """
         更新对象
@@ -90,16 +97,22 @@ class CRUDBase(Service[ModelType], Generic[ModelType]):
             session: 数据库会话
             db_obj: 数据库中的对象
             obj_in: 更新的数据
+            exclude_fields: 排除不更新的字段列表
             
         Returns:
             更新后的对象
         """
+        exclude_fields = exclude_fields or []
+        
         if isinstance(obj_in, dict):
             update_data = obj_in
         else:
             update_data = obj_in.dict(exclude_unset=True)
+            
         for field in update_data:
-            setattr(db_obj, field, update_data[field])
+            if field not in exclude_fields:
+                setattr(db_obj, field, update_data[field])
+                
         await session.commit()
         await session.refresh(db_obj)
         return db_obj

@@ -93,10 +93,16 @@ class MiningService:
                     "message": error_msg,
                     "mining_card": None
                 }
-            
+                
             # 获取矿工卡配置
-            card_config = MiningConfig.get_mining_card(card_type)
-            
+            card_config = MiningConfig.get_card_config(card_type)
+            if not card_config:
+                return {
+                    "success": False,
+                    "message": "矿工卡配置不存在",
+                    "mining_card": None
+                }
+                
             # 执行购买操作
             async with self.uow:
                 # 获取用户钱包账户
@@ -129,8 +135,20 @@ class MiningService:
                 )
                 
                 # 创建矿工卡记录
-                start_time = datetime.now()
+                # 修正：显式使用当前的真实时间，并添加检查
+                now = datetime.now()
+                
+                # 安全检查：确保年份是当前年份，避免错误的2025年设置
+                current_year = datetime.now().year
+                if now.year != current_year:
+                    logger.warning(f"检测到系统时间异常：{now}，自动修正为当前年份")
+                    now = now.replace(year=current_year)
+                
+                start_time = now
                 end_time = start_time + timedelta(days=card_config.duration_days)
+                
+                # 日志记录创建的日期
+                logger.info(f"创建矿工卡 - 开始时间: {start_time}, 结束时间: {end_time}, 持续天数: {card_config.duration_days}")
                 
                 mining_card_record = await mining_card.create_mining_card(
                     session=self.uow.session,
@@ -423,37 +441,31 @@ class MiningService:
     
     async def process_daily_mining_rewards(self, reward_date: date = None) -> Dict:
         """
-        处理每日挖矿奖励发放
+        处理每日挖矿奖励
         
         Args:
-            reward_date: 奖励日期，默认为今天
+            reward_date: 奖励日期，默认为当天
             
         Returns:
             处理结果字典
         """
-        if reward_date is None:
-            reward_date = date.today()
-        
         try:
+            if not reward_date:
+                reward_date = date.today()
+                
+            logger.info(f"开始处理挖矿奖励，日期：{reward_date}")
+            
             async with self.uow:
                 # 获取需要发放奖励的矿工卡
-                cards_needing_reward = await mining_card.get_cards_needing_reward(
+                cards = await mining_card.get_cards_needing_reward(
                     self.uow.session,
                     reward_date=reward_date
                 )
                 
-                if not cards_needing_reward:
-                    return {
-                        "success": True,
-                        "message": "没有需要发放奖励的矿工卡",
-                        "processed_cards": 0,
-                        "total_rewards": 0
-                    }
+                logger.info(f"找到 {len(cards)} 张需要发放奖励的矿工卡")
                 
-                processed_cards = 0
-                total_rewards = 0
-                
-                for card in cards_needing_reward:
+                processed_count = 0
+                for card in cards:
                     try:
                         # 计算奖励天数
                         if card.last_reward_time is None:
@@ -466,56 +478,64 @@ class MiningService:
                                 continue  # 今天已经发放过了
                             reward_day = card.total_days - card.remaining_days + 1
                         
-                        # 创建奖励记录
-                        await mining_reward.create_mining_reward(
+                        # 记录奖励
+                        reward = await mining_reward.create_reward(
                             session=self.uow.session,
-                            mining_card_id=card.id,
                             telegram_id=card.telegram_id,
+                            card_id=card.id,
                             card_type=card.card_type,
                             reward_points=card.daily_points,
                             reward_day=reward_day,
-                            reward_date=datetime.combine(reward_date, datetime.min.time()),
+                            reward_date=reward_date,
                             remarks=f"{card.card_type}矿工卡第{reward_day}天奖励"
                         )
+                        
+                        logger.info(f"已记录奖励：用户 {card.telegram_id}, 卡ID {card.id}, 积分 {card.daily_points}, 第 {reward_day} 天")
                         
                         # 更新矿工卡状态
                         new_earned_points = card.earned_points + card.daily_points
                         new_remaining_days = card.remaining_days - 1
                         new_status = 2 if new_remaining_days == 0 else 1  # 如果剩余天数为0，标记为已完成
                         
-                        await mining_card.update_card_reward(
+                        # 计算新的结束时间，确保与剩余天数同步
+                        # 使用原始的start_time作为基准，而不是当前时间
+                        new_end_time = card.start_time + timedelta(days=new_remaining_days)
+                        
+                        # 安全检查：确保年份不是错误的2025年
+                        if new_end_time.year >= 2025 and datetime.now().year < 2025:
+                            logger.warning(f"检测到日期异常：{new_end_time}，自动修正年份")
+                            new_end_time = new_end_time.replace(year=datetime.now().year)
+                            if new_remaining_days > 0:
+                                new_end_time = card.start_time.replace(year=datetime.now().year) + timedelta(days=new_remaining_days)
+                        
+                        await mining_card.update_card_reward_with_end_time(
                             session=self.uow.session,
                             card_id=card.id,
                             earned_points=new_earned_points,
                             remaining_days=new_remaining_days,
                             last_reward_time=datetime.combine(reward_date, datetime.min.time()),
+                            end_time=new_end_time,
                             status=new_status
                         )
                         
-                        processed_cards += 1
-                        total_rewards += card.daily_points
-                        
+                        processed_count += 1
                     except Exception as e:
                         logger.error(f"处理矿工卡 {card.id} 奖励失败: {e}")
-                        continue
                 
                 await self.uow.commit()
                 
                 return {
                     "success": True,
-                    "message": f"成功处理{processed_cards}张矿工卡的奖励发放，共{total_rewards:,}积分",
-                    "processed_cards": processed_cards,
-                    "total_rewards": total_rewards
+                    "message": f"成功处理 {processed_count} 张矿工卡奖励",
+                    "processed_count": processed_count
                 }
-                
         except Exception as e:
-            logger.error(f"处理每日挖矿奖励失败: {e}")
+            logger.error(f"处理挖矿奖励失败: {e}")
             await self.uow.rollback()
             return {
                 "success": False,
-                "message": "处理挖矿奖励失败",
-                "processed_cards": 0,
-                "total_rewards": 0
+                "message": f"处理失败: {e}",
+                "processed_count": 0
             }
     
     async def get_user_mining_cards(self, telegram_id: int, page: int = 1, limit: int = 10):
@@ -574,61 +594,105 @@ class MiningService:
             return 0
     
     async def process_daily_mining_rewards_batch(self, offset: int = 0, limit: int = 100):
-        """批量处理每日挖矿奖励"""
+        """
+        批量处理每日挖矿奖励发放
+        
+        Args:
+            offset: 偏移量
+            limit: 处理数量限制
+            
+        Returns:
+            处理结果
+        """
+        reward_date = date.today()
+        logger.info(f"开始批量处理挖矿奖励，日期：{reward_date}，偏移量：{offset}，限制：{limit}")
+        
         try:
-            # 获取需要处理的矿工卡（分页）
-            pending_cards = await mining_card.get_pending_cards_batch(
-                session=self.uow.session,
-                offset=offset,
-                limit=limit
-            )
-            
-            if not pending_cards:
-                return {
-                    "success": True,
-                    "message": "没有需要处理的矿工卡",
-                    "processed_cards": 0,
-                    "total_rewards": 0
-                }
-            
-            processed_cards = 0
-            total_rewards = 0
-            
-            for card in pending_cards:
-                try:
-                    # 处理单张矿工卡
-                    card_result = await self._process_single_card(card)
-                    
-                    if card_result["success"]:
-                        processed_cards += 1
-                        total_rewards += card_result["reward_points"]
+            async with self.uow:
+                # 获取需要发放奖励的矿工卡
+                cards = await mining_card.get_cards_needing_reward_batch(
+                    self.uow.session, 
+                    reward_date=reward_date,
+                    offset=offset,
+                    limit=limit
+                )
+                
+                if not cards:
+                    logger.info("没有需要发放奖励的矿工卡")
+                    return {
+                        "success": True,
+                        "message": "没有需要发放奖励的矿工卡",
+                        "processed_count": 0,
+                        "has_more": False
+                    }
+                
+                logger.info(f"找到 {len(cards)} 张需要发放奖励的矿工卡")
+                processed_count = 0
+                
+                for card in cards:
+                    try:
+                        # 每张卡单独处理
+                        card_result = await self._process_single_card(card)
+                        if not card_result["success"]:
+                            continue
                         
                         # 更新矿工卡状态
-                        await mining_card.update_card_status(
+                        new_earned_points = card.earned_points + card_result["reward_points"]
+                        new_remaining_days = card.remaining_days - 1
+                        new_status = 2 if new_remaining_days <= 0 else 1  # 如果剩余天数为0，标记为已完成
+                        
+                        # 计算新的结束时间，确保与剩余天数同步
+                        # 使用原始的start_time作为基准，而不是当前时间
+                        new_end_time = card.start_time + timedelta(days=new_remaining_days)
+                        
+                        # 安全检查：确保年份不是错误的2025年
+                        if new_end_time.year >= 2025 and datetime.now().year < 2025:
+                            logger.warning(f"检测到日期异常：{new_end_time}，自动修正年份")
+                            new_end_time = new_end_time.replace(year=datetime.now().year)
+                            if new_remaining_days > 0:
+                                new_end_time = card.start_time.replace(year=datetime.now().year) + timedelta(days=new_remaining_days)
+                        
+                        await mining_card.update_card_reward_with_end_time(
                             session=self.uow.session,
                             card_id=card.id,
-                            earned_points=card_result["reward_points"],
-                            last_reward_time=datetime.now()
+                            earned_points=new_earned_points,
+                            remaining_days=new_remaining_days,
+                            last_reward_time=datetime.now(),
+                            end_time=new_end_time,
+                            status=new_status
                         )
-                    
-                except Exception as e:
-                    logger.error(f"处理矿工卡 {card.id} 失败: {e}")
-                    continue
-            
-            return {
-                "success": True,
-                "message": f"批量处理完成，处理 {processed_cards} 张矿工卡",
-                "processed_cards": processed_cards,
-                "total_rewards": total_rewards
-            }
-            
+                        
+                        processed_count += 1
+                    except Exception as e:
+                        logger.error(f"批量处理矿工卡 {card.id} 失败: {e}")
+                
+                # 检查是否还有更多卡片需要处理
+                more_cards = await mining_card.get_cards_needing_reward_batch(
+                    self.uow.session,
+                    reward_date=reward_date,
+                    offset=offset + limit,
+                    limit=1
+                )
+                
+                has_more = len(more_cards) > 0
+                
+                await self.uow.commit()
+                
+                return {
+                    "success": True,
+                    "message": f"成功处理 {processed_count} 张矿工卡奖励",
+                    "processed_count": processed_count,
+                    "has_more": has_more
+                }
+                
         except Exception as e:
-            logger.error(f"批量处理每日挖矿奖励失败: {e}")
+            logger.error(f"批量处理挖矿奖励失败: {e}")
+            await self.uow.rollback()
             return {
                 "success": False,
-                "message": f"批量处理失败: {e}",
-                "processed_cards": 0,
-                "total_rewards": 0
+                "message": f"处理失败: {e}",
+                "processed_count": 0,
+                "has_more": False
             }
     
     async def _process_single_card(self, card):

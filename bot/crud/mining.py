@@ -4,7 +4,7 @@
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from decimal import Decimal
@@ -46,6 +46,40 @@ class CRUDMiningCard(CRUDBase[MiningCard]):
             "remarks": remarks
         }
         return await super().create(session=session, obj_in=mining_card_data)
+
+    async def create_test_card(
+        self,
+        session: AsyncSession,
+        *,
+        telegram_id: int,
+        card_type: str,
+        cost_usdt: int,
+        daily_points: int,
+        total_days: int,
+        start_time: datetime,
+        end_time: datetime,
+        remarks: str = ""
+    ) -> MiningCard:
+        """创建测试用矿工卡"""
+        card_data = {
+            "telegram_id": telegram_id,
+            "card_type": card_type,
+            "cost_usdt": cost_usdt,
+            "daily_points": daily_points,
+            "total_days": total_days,
+            "remaining_days": total_days,
+            "earned_points": 0,
+            "status": 1,  # 1=有效
+            "start_time": start_time,
+            "end_time": end_time,
+            "last_reward_time": None,
+            "remarks": remarks
+        }
+        
+        card = MiningCard(**card_data)
+        session.add(card)
+        await session.flush()
+        return card
 
     async def get_by_telegram_id(
         self,
@@ -122,6 +156,45 @@ class CRUDMiningCard(CRUDBase[MiningCard]):
         result = await session.execute(stmt)
         return result.scalars().all()
 
+    async def get_cards_needing_reward_batch(self, session: AsyncSession, reward_date: date, offset: int = 0, limit: int = 100) -> List[MiningCard]:
+        """
+        批量获取需要发放奖励的矿工卡
+        
+        Args:
+            session: 数据库会话
+            reward_date: 奖励日期
+            offset: 偏移量
+            limit: 限制数量
+            
+        Returns:
+            需要发放奖励的矿工卡列表
+        """
+        from sqlalchemy import func, or_
+        
+        try:
+            stmt = (
+                select(MiningCard)
+                .where(
+                    MiningCard.status == 1,  # 挖矿中
+                    MiningCard.remaining_days > 0,  # 还有剩余天数
+                    func.date(MiningCard.start_time) <= reward_date,  # 已开始
+                    func.date(MiningCard.end_time) >= reward_date,  # 未结束
+                    or_(
+                        MiningCard.last_reward_time.is_(None),  # 从未发放过奖励
+                        func.date(MiningCard.last_reward_time) < reward_date  # 上次奖励日期早于今天
+                    )
+                )
+                .order_by(MiningCard.id)
+                .offset(offset)
+                .limit(limit)
+            )
+            
+            result = await session.execute(stmt)
+            return result.scalars().all()
+        except Exception as e:
+            logger.error(f"批量获取需要发放奖励的矿工卡失败: {e}")
+            return []
+
     async def update_card_reward(
         self,
         session: AsyncSession,
@@ -134,16 +207,109 @@ class CRUDMiningCard(CRUDBase[MiningCard]):
     ) -> MiningCard:
         """更新矿工卡奖励信息"""
         update_data = {
-            "earned_points": earned_points,
             "remaining_days": remaining_days,
+            "earned_points": earned_points,
             "last_reward_time": last_reward_time
         }
+        
         if status is not None:
             update_data["status"] = status
+            
+        card = await self.update(
+            session=session,
+            db_obj=await self.get(session, card_id),
+            obj_in=update_data,
+            exclude_fields=["start_time"]  # 排除start_time字段，确保它不会被更新
+        )
+        return card
+    
+    async def update_card_reward_with_end_time(
+        self,
+        session: AsyncSession,
+        *,
+        card_id: int,
+        earned_points: int,
+        remaining_days: int,
+        end_time: datetime,
+        last_reward_time: datetime,
+        status: Optional[int] = None
+    ) -> MiningCard:
+        """更新矿工卡奖励信息（包括结束时间）"""
+        update_data = {
+            "remaining_days": remaining_days,
+            "earned_points": earned_points,
+            "end_time": end_time,
+            "last_reward_time": last_reward_time
+        }
         
+        if status is not None:
+            update_data["status"] = status
+            
+        card = await self.update(
+            session=session,
+            db_obj=await self.get(session, card_id),
+            obj_in=update_data,
+            exclude_fields=["start_time"]  # 排除start_time字段，确保它不会被更新
+        )
+        return card
+
+    async def update_card_dates(
+        self,
+        session: AsyncSession,
+        *,
+        card_id: int,
+        end_time: datetime,
+        remaining_days: int
+    ) -> MiningCard:
+        """专门用于更新矿工卡的结束时间和剩余天数"""
+        update_data = {
+            "end_time": end_time,
+            "remaining_days": remaining_days
+        }
+        
+        # 获取矿工卡对象
+        db_obj = await self.get(session, card_id)
+        if not db_obj:
+            raise ValueError(f"找不到ID为{card_id}的矿工卡")
+            
         return await super().update(
             session=session,
-            db_obj_id=card_id,
+            db_obj=db_obj,
+            obj_in=update_data
+        )
+
+    async def get_active_cards(
+        self,
+        session: AsyncSession
+    ) -> List[MiningCard]:
+        """获取所有状态为挖矿中的矿工卡"""
+        stmt = select(MiningCard).where(
+            MiningCard.status == 1,  # 挖矿中
+            MiningCard.is_deleted == False
+        )
+        result = await session.execute(stmt)
+        return result.scalars().all()
+
+    async def update_last_reward_time(
+        self,
+        session: AsyncSession,
+        *,
+        card_id: int,
+        last_reward_time: datetime
+    ) -> MiningCard:
+        """更新矿工卡的最后奖励时间"""
+        update_data = {
+            "last_reward_time": last_reward_time
+        }
+        
+        # 获取矿工卡对象
+        db_obj = await self.get(session, card_id)
+        if not db_obj:
+            raise ValueError(f"找不到ID为{card_id}的矿工卡")
+            
+        return await super().update(
+            session=session,
+            db_obj=db_obj,
             obj_in=update_data
         )
 
@@ -301,10 +467,15 @@ class CRUDMiningCard(CRUDBase[MiningCard]):
             # 减少剩余天数
             card.remaining_days -= 1
             
+            # 更新结束时间，与剩余天数保持同步
+            if card.remaining_days > 0:
+                card.end_time = datetime.now() + timedelta(days=card.remaining_days)
+            
             # 如果剩余天数为0，标记为已完成
             if card.remaining_days <= 0:
                 card.status = 2  # 已完成
                 card.remaining_days = 0
+                card.end_time = datetime.now()  # 结束时间设为当前时间
             
             # 保存更新
             await session.commit()
@@ -338,6 +509,32 @@ class CRUDMiningReward(CRUDBase[MiningReward]):
             "reward_points": reward_points,
             "reward_day": reward_day,
             "reward_date": reward_date,
+            "status": 1,  # 待领取
+            "claimed_time": None,
+            "remarks": remarks
+        }
+        return await super().create(session=session, obj_in=reward_data)
+
+    async def create_reward(
+        self,
+        session: AsyncSession,
+        *,
+        telegram_id: int,
+        card_id: int,
+        card_type: str,
+        reward_points: int,
+        reward_day: int,
+        reward_date: date,
+        remarks: Optional[str] = None
+    ) -> MiningReward:
+        """创建挖矿奖励记录（新版方法）"""
+        reward_data = {
+            "mining_card_id": card_id,
+            "telegram_id": telegram_id,
+            "card_type": card_type,
+            "reward_points": reward_points,
+            "reward_day": reward_day,
+            "reward_date": datetime.combine(reward_date, datetime.min.time()),
             "status": 1,  # 待领取
             "claimed_time": None,
             "remarks": remarks
