@@ -8,26 +8,28 @@ from datetime import datetime, timedelta
 from bot.config.lottery_config import LotteryConfig
 from bot.crud.lottery import lottery_draw, lottery_bet, lottery_cashback
 from bot.crud.account import account as account_crud
-from bot.crud.account_transaction import account_transaction as transaction_crud
+from bot.crud.account_transaction import account_transaction as account_transaction_crud
 from bot.common.uow import UoW
 import logging
+from bot.config.multi_game_config import MultiGameConfig
 
 logger = logging.getLogger(__name__)
 
 class LotteryService:
-    """开奖服务类"""
+    """彩票服务"""
     
-    # 开奖相关交易类型常量
+    # 账户类型
+    ACCOUNT_TYPE_POINTS = 1  # 积分账户
+    
+    # 交易类型
     TRANSACTION_TYPE_LOTTERY_BET = 30  # 开奖投注
     TRANSACTION_TYPE_LOTTERY_WIN = 31  # 开奖中奖
     TRANSACTION_TYPE_LOTTERY_CASHBACK = 32  # 开奖返水
     
-    # 账户类型常量
-    ACCOUNT_TYPE_POINTS = 1  # 积分账户
-    
     def __init__(self, uow: UoW):
         self.uow = uow
-    
+        self.multi_config = MultiGameConfig()
+        
     def generate_draw_number(self) -> str:
         """生成期号"""
         import random
@@ -157,15 +159,17 @@ class LotteryService:
                 )
                 
                 # 记录扣除交易
-                await transaction_crud.create(
-                    session=self.uow.session,
-                    account_id=account.id,
-                    telegram_id=telegram_id,
-                    account_type=self.ACCOUNT_TYPE_POINTS,
-                    transaction_type=self.TRANSACTION_TYPE_LOTTERY_BET,
-                    amount=-bet_amount,
-                    balance=account.available_amount,
-                    remarks=f"开奖投注 {bet_type} {bet_amount}积分"
+                await account_transaction_crud.create(
+                    self.uow.session,
+                    obj_in={
+                        "account_id": account.id,
+                        "telegram_id": telegram_id,
+                        "account_type": self.ACCOUNT_TYPE_POINTS,
+                        "transaction_type": self.TRANSACTION_TYPE_LOTTERY_BET,
+                        "amount": -bet_amount,
+                        "balance": account.available_amount,
+                        "remarks": f"开奖投注 {bet_type} {bet_amount}积分"
+                    }
                 )
                 
                 # 创建投注记录
@@ -226,10 +230,12 @@ class LotteryService:
                 }
             
             # 生成开奖结果
-            result = LotteryConfig.generate_lottery_result()
+            result = self.multi_config.generate_secure_result()
+            logger.info(f"为期号 {current_draw.draw_number} 生成开奖结果: {result}")
             
             # 获取该期所有投注
             bets = await lottery_bet.get_by_draw_number(self.uow.session, group_id, "lottery", current_draw.draw_number)
+            logger.info(f"期号 {current_draw.draw_number} 共有 {len(bets)} 个投注")
             
             total_payout = 0
             
@@ -248,8 +254,33 @@ class LotteryService:
                 # 结算所有投注
                 for bet in bets:
                     # 检查是否中奖
-                    is_win = LotteryConfig.check_bet_win(bet.bet_type, bet.bet_amount, result)
-                    win_amount = LotteryConfig.calculate_win_amount(bet.bet_type, bet.bet_amount) if is_win else 0
+                    is_win = False
+                    win_amount = 0
+                    
+                    # 获取当前游戏类型和配置
+                    current_game_type = current_draw.game_type
+                    game_config = self.multi_config.get_game_config(current_game_type)
+                    if not game_config:
+                        logger.error(f"游戏配置未找到: {current_game_type}")
+                        continue
+                        
+                    logger.info(f"处理投注: ID={bet.id}, 类型={bet.bet_type}, 金额={bet.bet_amount}, 游戏类型={current_game_type}")
+                    
+                    # 使用游戏配置判断中奖
+                    is_win = self.multi_config.check_bet_win(bet.bet_type, result, current_game_type)
+                    logger.info(f"中奖判断: 投注类型={bet.bet_type}, 结果={result}, 是否中奖={is_win}")
+                    
+                    # 打印游戏配置信息
+                    if bet.bet_type in game_config.bet_types:
+                        bet_config = game_config.bet_types[bet.bet_type]
+                        logger.info(f"投注配置: 类型={bet.bet_type}, 对应数字={bet_config['numbers']}, 赔率={bet_config['odds']}")
+                    
+                    if is_win:
+                        # 使用游戏配置计算奖金
+                        win_amount = self.multi_config.calculate_win_amount(bet.bet_type, bet.bet_amount, current_game_type)
+                        logger.info(f"奖金计算: 投注类型={bet.bet_type}, 金额={bet.bet_amount}, 奖金={win_amount}")
+                    
+                    logger.info(f"结算投注: ID={bet.id}, 用户={bet.telegram_id}, 投注={bet.bet_type}, 金额={bet.bet_amount}, 是否中奖={is_win}, 奖金={win_amount}")
                     
                     # 更新投注记录
                     await lottery_bet.update(
@@ -262,45 +293,53 @@ class LotteryService:
                         }
                     )
                     
-                    # 如果中奖，发放奖励
+                    # 派发奖金
                     if is_win and win_amount > 0:
+                        # 获取用户账户
                         account = await account_crud.get_by_telegram_id_and_type(
-                            self.uow.session,
-                            bet.telegram_id,
-                            self.ACCOUNT_TYPE_POINTS
+                            self.uow.session, bet.telegram_id, self.ACCOUNT_TYPE_POINTS
                         )
-                        
                         if account:
-                            account.available_amount += win_amount
-                            account.total_amount += win_amount
+                            # 更新账户余额
+                            new_total = account.total_amount + win_amount
+                            new_available = account.available_amount + win_amount
+                            
                             await account_crud.update(
                                 session=self.uow.session,
                                 db_obj=account,
-                                obj_in={"available_amount": account.available_amount, "total_amount": account.total_amount}
+                                obj_in={
+                                    "total_amount": new_total,
+                                    "available_amount": new_available,
+                                }
                             )
                             
-                            # 记录中奖交易
-                            await transaction_crud.create(
-                                session=self.uow.session,
-                                account_id=account.id,
-                                telegram_id=bet.telegram_id,
-                                account_type=self.ACCOUNT_TYPE_POINTS,
-                                transaction_type=self.TRANSACTION_TYPE_LOTTERY_WIN,
-                                amount=win_amount,
-                                balance=account.available_amount,
-                                remarks=f"开奖中奖 {bet.bet_type} {win_amount}积分"
+                            # 添加交易记录
+                            await account_transaction_crud.create(
+                                self.uow.session,
+                                obj_in={
+                                    "account_id": account.id,
+                                    "telegram_id": bet.telegram_id,
+                                    "account_type": self.ACCOUNT_TYPE_POINTS,
+                                    "transaction_type": self.TRANSACTION_TYPE_LOTTERY_WIN,
+                                    "amount": win_amount,
+                                    "balance": new_total,
+                                    "remarks": f"开奖中奖 {bet.bet_type} {win_amount}积分"
+                                }
                             )
                             
+                            # 累计总派奖
                             total_payout += win_amount
+                            logger.info(f"派奖成功: 用户={bet.telegram_id}, 投注={bet.bet_type}, 金额={bet.bet_amount}, 奖金={win_amount}")
+                        else:
+                            logger.error(f"派奖失败: 未找到用户账户, 用户={bet.telegram_id}")
                 
-                # 更新开奖期统计
-                profit = current_draw.total_bets - total_payout
+                # 更新开奖记录
                 await lottery_draw.update(
                     session=self.uow.session,
                     db_obj=current_draw,
                     obj_in={
                         "total_payout": total_payout,
-                        "profit": profit
+                        "profit": current_draw.total_bets - total_payout
                     }
                 )
                 
@@ -312,7 +351,7 @@ class LotteryService:
                     "result": result,
                     "total_bets": current_draw.total_bets,
                     "total_payout": total_payout,
-                    "profit": profit,
+                    "profit": current_draw.total_bets - total_payout,
                     "message": f"第 {current_draw.draw_number} 期开奖完成，结果: {result}"
                 }
                 
@@ -378,15 +417,17 @@ class LotteryService:
                         )
                         
                         # 记录返水交易
-                        await transaction_crud.create(
-                            session=self.uow.session,
-                            account_id=account.id,
-                            telegram_id=telegram_id,
-                            account_type=self.ACCOUNT_TYPE_POINTS,
-                            transaction_type=self.TRANSACTION_TYPE_LOTTERY_CASHBACK,
-                            amount=total_cashback,
-                            balance=account.available_amount,
-                            remarks=f"开奖返水 {total_cashback}积分"
+                        await account_transaction_crud.create(
+                            self.uow.session,
+                            obj_in={
+                                "account_id": account.id,
+                                "telegram_id": telegram_id,
+                                "account_type": self.ACCOUNT_TYPE_POINTS,
+                                "transaction_type": self.TRANSACTION_TYPE_LOTTERY_CASHBACK,
+                                "amount": total_cashback,
+                                "balance": account.available_amount,
+                                "remarks": f"开奖返水 {total_cashback}积分"
+                            }
                         )
                 
                 await self.uow.commit()

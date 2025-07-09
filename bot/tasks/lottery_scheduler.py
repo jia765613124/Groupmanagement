@@ -97,7 +97,7 @@ class LotteryScheduler:
         message += f"   总派奖: {total_payout:,} 积分\n"
         
         # 计算盈亏
-        profit = total_bets - total_payout
+        profit = draw.profit  # 直接使用数据库中保存的盈亏值
         if profit > 0:
             message += f"   💰 盈利: +{profit:,} 积分"
         else:

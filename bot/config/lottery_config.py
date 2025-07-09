@@ -163,14 +163,24 @@ class LotteryConfig:
         return cls.get_bet_types()
     
     @classmethod
-    def check_bet_win(cls, bet_type: str, bet_number: int, result: int) -> bool:
+    def check_bet_win(cls, bet_type: str, result: int, bet_amount: int = None) -> bool:
         """检查投注是否中奖"""
         return cls._multi_config.check_bet_win(bet_type, result, "lottery")
     
     @classmethod
     def calculate_win_amount(cls, bet_type: str, bet_amount: int) -> int:
         """计算中奖金额"""
-        return cls._multi_config.calculate_win_amount(bet_type, bet_amount, "lottery")
+        multi_config = cls._multi_config
+        
+        # 数字投注
+        if bet_type.isdigit() and len(bet_type) == 1:
+            game_config = multi_config.get_game_config("lottery")
+            if not game_config:
+                return 0
+            return int(bet_amount * game_config.number_odds)
+        
+        # 其他投注类型
+        return multi_config.calculate_win_amount(bet_type, bet_amount, "lottery")
     
     @classmethod
     def calculate_cashback(cls, bet_amount: int) -> int:

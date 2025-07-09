@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import secrets
 import random
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class GameConfig:
@@ -46,7 +49,7 @@ class MultiGameConfig:
                 game_type="lottery",
                 name="数字开奖",
                 description="经典数字开奖游戏，猜中数字获得高额奖励",
-                draw_interval=5,
+                draw_interval=1,
                 bet_types={
                     "小": {"numbers": [1, 2, 3, 4], "odds": 2.36, "min_bet": 1, "max_bet": 100000},
                     "大": {"numbers": [6, 7, 8, 9], "odds": 2.36, "min_bet": 1, "max_bet": 100000},
@@ -179,35 +182,47 @@ class MultiGameConfig:
         """检查投注是否中奖"""
         game_config = self.get_game_config(game_type)
         if not game_config:
+            logger.error(f"游戏配置未找到: {game_type}")
             return False
         
         # 数字投注
         if bet_type.isdigit() and len(bet_type) == 1:
-            return int(bet_type) == result
+            is_win = int(bet_type) == result
+            logger.info(f"数字投注判断: 投注={bet_type}, 结果={result}, 是否中奖={is_win}")
+            return is_win
         
         # 其他投注类型
         bet_config = game_config.bet_types.get(bet_type)
         if not bet_config:
+            logger.error(f"投注类型配置未找到: {bet_type}")
             return False
         
-        return result in bet_config["numbers"]
+        is_win = result in bet_config["numbers"]
+        logger.info(f"组合投注判断: 投注类型={bet_type}, 结果={result}, 对应数字={bet_config['numbers']}, 是否中奖={is_win}")
+        return is_win
     
     def calculate_win_amount(self, bet_type: str, bet_amount: int, game_type: str) -> int:
         """计算中奖金额"""
         game_config = self.get_game_config(game_type)
         if not game_config:
+            logger.error(f"游戏配置未找到: {game_type}")
             return 0
         
         # 数字投注
         if bet_type.isdigit() and len(bet_type) == 1:
-            return int(bet_amount * game_config.number_odds)
+            win_amount = int(bet_amount * game_config.number_odds)
+            logger.info(f"数字投注奖金计算: 投注={bet_type}, 金额={bet_amount}, 赔率={game_config.number_odds}, 奖金={win_amount}")
+            return win_amount
         
         # 其他投注类型
         bet_config = game_config.bet_types.get(bet_type)
         if not bet_config:
+            logger.error(f"投注类型配置未找到: {bet_type}")
             return 0
         
-        return int(bet_amount * bet_config["odds"])
+        win_amount = int(bet_amount * bet_config["odds"])
+        logger.info(f"组合投注奖金计算: 类型={bet_type}, 金额={bet_amount}, 赔率={bet_config['odds']}, 奖金={win_amount}")
+        return win_amount
     
     def calculate_cashback(self, bet_amount: int, game_type: str) -> int:
         """计算返水金额"""

@@ -127,11 +127,11 @@ async def setup_webhook(bot: Bot):
         logger.warning(f"Failed to setup bot commands: {e}")
 
     # 启动开奖调度器
-    # try:
-    #     asyncio.create_task(start_lottery_scheduler())
-    #     logger.info("Started lottery scheduler task")
-    # except Exception as e:
-    #     logger.error(f"Failed to start lottery scheduler: {e}")
+    try:
+        asyncio.create_task(start_lottery_scheduler())
+        logger.info("Started lottery scheduler task")
+    except Exception as e:
+        logger.error(f"Failed to start lottery scheduler: {e}")
 
     # 启动挖矿调度器
     try:
