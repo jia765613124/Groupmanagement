@@ -49,7 +49,7 @@ class MultiGameConfig:
                 game_type="lottery",
                 name="数字开奖",
                 description="经典数字开奖游戏，猜中数字获得高额奖励",
-                draw_interval=1,
+                draw_interval=5,
                 bet_types={
                     "小": {"numbers": [1, 2, 3, 4], "odds": 2.36, "min_bet": 1, "max_bet": 100000},
                     "大": {"numbers": [6, 7, 8, 9], "odds": 2.36, "min_bet": 1, "max_bet": 100000},
