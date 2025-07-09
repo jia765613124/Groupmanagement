@@ -112,19 +112,19 @@ class MultiGameConfig:
         self._init_default_groups()
     
     def _init_default_groups(self):
-        """初始化默认群组配置"""
+        """初始化默认群组配置  测试  1002417673222 开奖群组2"""
         # 示例群组配置
         default_groups = [
             GroupConfig(
-                group_id=-1002417673222,
-                group_name="开奖群组2",
+                group_id=-1002882701368,
+                group_name="开奖群组1",
                 game_type="lottery",
                 enabled=True,
                 admin_only=False,
                 min_bet=1,
                 max_bet=100000,
                 auto_draw=True,
-                notification_groups=[-1002417673222]
+                notification_groups=[-1002882701368]
             ),
         ]
         
