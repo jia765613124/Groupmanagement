@@ -66,17 +66,18 @@ class FishingService:
             logger.error(f"检查钓鱼条件失败: {e}")
             return False, "系统错误，请稍后重试"
     
-    async def fish(self, telegram_id: int, rod_type: str, subscription_link: str = "") -> Dict:
+    async def fish(self, telegram_id: int, rod_type: str, subscription_link: str = "", player_name: str = "") -> Dict:
         """
         执行钓鱼操作
         
         Args:
             telegram_id: Telegram用户ID
             rod_type: 钓鱼竿类型
-            subscription_link: 订阅号链接，用于传说鱼通知
+            subscription_link: 订阅链接
+            player_name: 玩家名称（用于传说鱼通知）
             
         Returns:
-            钓鱼结果字典
+            钓鱼结果
         """
         try:
             # 检查是否可以钓鱼
@@ -160,8 +161,10 @@ class FishingService:
                     # 如果是传说鱼，生成通知消息
                     notification = None
                     if fishing_result["is_legendary"]:
+                        # 优先使用传入的玩家名称，其次使用账户备注，最后使用用户ID
+                        display_name = player_name or account.remarks or f"用户{telegram_id}"
                         notification = FishingConfig.format_legendary_notification(
-                            player_name=account.remarks or f"用户{telegram_id}",
+                            player_name=display_name,
                             fish_name=fishing_result["fish"].name,
                             fish_points=earned_points,  # 传入实际积分
                             subscription_link=subscription_link

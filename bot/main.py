@@ -22,6 +22,7 @@ from bot.handlers.lottery_handler import lottery_router  # 导入开奖处理器
 from bot.handlers.group_message_monitor import group_message_monitor_router  # 导入群组消息监控器
 from bot.handlers.text_message_monitor import text_message_monitor_router  # 导入文字消息监控器
 from bot.handlers.bet_message_monitor import bet_message_monitor_router  # 导入投注消息监控器
+from bot.handlers.red_packet_handler import red_packet_router  # 导入红包处理器
 from bot.ioc import DepsProvider
 from bot.misc import bot, dp
 from bot.tasks.lottery_scheduler import start_lottery_scheduler, stop_lottery_scheduler  # 导入开奖调度器
@@ -48,6 +49,7 @@ def register_routers(router: Router):
     router.include_router(group_router)       # 群组成员监控
     router.include_router(bot_router)         # 机器人状态监控
     router.include_router(lottery_router)     # 开奖处理器
+    router.include_router(red_packet_router)  # 红包处理器
     router.include_router(commands_router)    # 命令路由器
     router.include_router(message_router)     # 消息监控放在最后
     logger.info("Routers registered successfully")

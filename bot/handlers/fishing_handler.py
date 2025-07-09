@@ -98,18 +98,28 @@ async def handle_fishing_callback(callback_query, rod_type: str):
         # 如果配置中有subscription_link则使用，否则使用默认值
         subscription_link = getattr(config, "subscription_link", "https://t.me/your_subscription")
         
+        # 获取用户完整名称
+        player_name = callback_query.from_user.full_name or f"用户{telegram_id}"
+        
         result = await fishing_service.fish(
             telegram_id=telegram_id,
             rod_type=rod_type,
-            subscription_link=subscription_link
+            subscription_link=subscription_link,
+            player_name=player_name  # 传递用户名称
         )
         
         # 构建结果消息
         message_text = _build_fishing_result_message(result)
         
-        # 如果有传说鱼通知，发送到群组
+        # 如果有传说鱼通知，发送到群组并发红包
         if result.get("notification"):
-            await _send_legendary_notification_aiogram(result["notification"])
+            # 这里直接使用前面已经获取的玩家名称
+            fish_points = result.get("points", 0)
+            await _send_legendary_notification_aiogram(
+                notification=result["notification"],
+                fish_points=fish_points,
+                player_name=player_name
+            )
         
         # 添加继续钓鱼按钮
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -130,28 +140,60 @@ async def handle_fishing_callback(callback_query, rod_type: str):
             ]
         )
         
-        await callback_query.message.edit_text(message_text, reply_markup=keyboard)
-        await callback_query.answer()
+        try:
+            await callback_query.message.edit_text(message_text, reply_markup=keyboard)
+            await callback_query.answer()
+        except Exception as e:
+            logger.warning(f"无法更新钓鱼结果消息: {e}")
+            # 尝试发送新消息而不是编辑
+            try:
+                await callback_query.message.reply(message_text, reply_markup=keyboard)
+            except Exception as reply_error:
+                logger.error(f"无法发送钓鱼结果消息: {reply_error}")
         
     except Exception as e:
         logger.error(f"处理钓鱼回调失败: {e}")
-        await callback_query.answer("❌ 钓鱼失败，请稍后重试")
+        try:
+            await callback_query.answer("❌ 钓鱼失败，请稍后重试")
+        except Exception as answer_error:
+            logger.warning(f"无法显示钓鱼失败提示: {answer_error}")
 
-async def _send_legendary_notification_aiogram(notification: str):
-    """发送传说鱼通知到群组（aiogram 版本）"""
+async def _send_legendary_notification_aiogram(notification: str, fish_points: int = 0, player_name: str = ""):
+    """发送传说鱼通知到群组（aiogram 版本），并发红包"""
     try:
         # 这里需要配置群组ID，可以从配置文件或环境变量获取
         group_ids = _get_notification_group_ids()
         
         from bot.misc import bot
+        sent_to_groups = []
+        
         for group_id in group_ids:
             try:
+                # 发送通知
                 await bot.send_message(group_id, notification)
+                sent_to_groups.append(group_id)
+                
+                # 如果有积分和玩家名，发放红包
+                if fish_points > 0 and player_name:
+                    from bot.handlers.red_packet_handler import create_red_packet_from_fishing
+                    success, red_packet_id = await create_red_packet_from_fishing(
+                        chat_id=group_id,
+                        player_name=player_name,
+                        fish_points=fish_points
+                    )
+                    if not success:
+                        logger.error(f"在群组 {group_id} 创建钓鱼红包失败")
+                    else:
+                        logger.info(f"在群组 {group_id} 成功创建钓鱼红包: {red_packet_id}")
+                
             except Exception as e:
                 logger.error(f"发送传说鱼通知到群组 {group_id} 失败: {e}")
+        
+        return sent_to_groups
                 
     except Exception as e:
         logger.error(f"发送传说鱼通知失败: {e}")
+        return []
 
 def _build_fishing_interface_message(fishing_info: dict) -> str:
     """构建钓鱼界面消息"""
@@ -391,18 +433,29 @@ class FishingHandler:
             # 如果配置中有subscription_link则使用，否则使用默认值
             subscription_link = getattr(config, "subscription_link", "https://t.me/your_subscription")
             
+            # 获取用户名称
+            from telethon.utils import get_display_name
+            player_name = get_display_name(await event.get_sender()) or f"用户{telegram_id}"
+            
             result = await fishing_service.fish(
                 telegram_id=telegram_id,
                 rod_type=rod_type,
-                subscription_link=subscription_link
+                subscription_link=subscription_link,
+                player_name=player_name  # 传递用户名称
             )
             
             # 构建结果消息
             message = self._build_fishing_result_message(result)
             
-            # 如果有传说鱼通知，发送到群组
+            # 如果有传说鱼通知，发送到群组并发红包
             if result.get("notification"):
-                await self._send_legendary_notification(result["notification"])
+                # 这里直接使用前面已经获取的玩家名称
+                fish_points = result.get("points", 0)
+                await self._send_legendary_notification(
+                    notification=result["notification"],
+                    fish_points=fish_points,
+                    player_name=player_name
+                )
             
             await event.answer(message)
             
@@ -537,20 +590,41 @@ class FishingHandler:
         
         return message
     
-    async def _send_legendary_notification(self, notification: str):
-        """发送传说鱼通知到群组"""
+    async def _send_legendary_notification(self, notification: str, fish_points: int = 0, player_name: str = ""):
+        """发送传说鱼通知到群组，并发红包"""
         try:
             # 这里需要配置群组ID，可以从配置文件或环境变量获取
             group_ids = self._get_notification_group_ids()
+            sent_to_groups = []
             
             for group_id in group_ids:
                 try:
+                    # 发送通知
                     await self.client.send_message(group_id, notification)
+                    sent_to_groups.append(group_id)
+                    
+                    # 如果有积分和玩家名，发放红包
+                    if fish_points > 0 and player_name:
+                        # 使用aiogram发红包，需要导入aiogram相关函数
+                        from bot.handlers.red_packet_handler import create_red_packet_from_fishing
+                        success, red_packet_id = await create_red_packet_from_fishing(
+                            chat_id=group_id,
+                            player_name=player_name,
+                            fish_points=fish_points
+                        )
+                        if not success:
+                            logger.error(f"在群组 {group_id} 创建钓鱼红包失败")
+                        else:
+                            logger.info(f"在群组 {group_id} 成功创建钓鱼红包: {red_packet_id}")
+                    
                 except Exception as e:
                     logger.error(f"发送传说鱼通知到群组 {group_id} 失败: {e}")
+            
+            return sent_to_groups
                     
         except Exception as e:
             logger.error(f"发送传说鱼通知失败: {e}")
+            return []
     
     def _get_notification_group_ids(self) -> list:
         """获取需要发送通知的群组ID列表"""
