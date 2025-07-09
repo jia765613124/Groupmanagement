@@ -71,12 +71,13 @@ async def show_mining_cards(message, telegram_id: int, page: int = 1):
             await message.answer(f"❌ {mining_info['message']}")
             return
         
-        # 获取用户的矿工卡列表（分页）
+        # 获取用户的矿工卡列表（分页），只显示有效的矿工卡
         cards_per_page = 5
         user_cards_result = await mining_service.get_user_mining_cards(
             telegram_id=telegram_id, 
             page=page, 
-            limit=cards_per_page
+            limit=cards_per_page,
+            only_active=True  # 只获取有效的矿工卡
         )
         
         if not user_cards_result["success"]:
@@ -239,12 +240,13 @@ async def show_mining_management(message, telegram_id: int, page: int = 1):
     try:
         mining_service = await get_mining_service()
         
-        # 获取用户的矿工卡列表（分页）
+        # 获取用户的矿工卡列表（分页），显示所有矿工卡，但按状态排序
         cards_per_page = 8
         user_cards_result = await mining_service.get_user_mining_cards(
             telegram_id=telegram_id, 
             page=page, 
-            limit=cards_per_page
+            limit=cards_per_page,
+            only_active=False  # 显示所有矿工卡
         )
         
         if not user_cards_result["success"]:
@@ -373,17 +375,21 @@ def _build_mining_cards_message(mining_info: dict, user_cards_result: dict) -> s
     cards_info = mining_info["cards_info"]
     user_cards = user_cards_result.get("cards", [])
     total_cards = user_cards_result.get("total_count", 0)
+    active_count = user_cards_result.get("active_count", 0)
     current_page = user_cards_result.get("current_page", 1)
     total_pages = user_cards_result.get("total_pages", 1)
     
+    # 只显示剩余天数大于0的卡片
+    active_cards = [card for card in user_cards if card["remaining_days"] > 0]
+    
     message = f"🔧 **购买矿工卡**\n\n"
     message += f"💰 钱包余额: **{wallet_balance:.2f}U**\n"
-    message += f"📊 总矿工卡: **{total_cards}** 张\n\n"
+    message += f"📊 有效矿工卡: **{active_count}** 张\n\n"
     
     # 显示用户现有的矿工卡（当前页）
-    if user_cards:
+    if active_cards:
         message += "**您现有的矿工卡:**\n"
-        for card in user_cards:
+        for card in active_cards:
             status_emoji = "⛏️" if card["status"] == 1 else "✅" if card["status"] == 2 else "❌"
             message += f"{status_emoji} {card['card_type']}矿工卡\n"
             message += f"   💰 每日积分: {card['daily_points']:,}\n"
@@ -485,7 +491,7 @@ def _build_purchase_result_message(result: dict) -> str:
     message += f"⏰ 持续天数: **{mining_card['total_days']}** 天\n"
     message += f"📅 开始时间: {mining_card['start_time'].strftime('%Y-%m-%d %H:%M')}\n"
     message += f"📅 结束时间: {mining_card['end_time'].strftime('%Y-%m-%d %H:%M')}\n\n"
-    message += f"💡 **提示:** 矿工们会在每天自动挖取积分，您可以在第二天签到或手动领取奖励！"
+    message += f"💡 **提示:** 矿工们会在每天自动挖取积分，您可以在手动领取奖励！"
     
     return message
 
@@ -502,7 +508,10 @@ def _build_pending_rewards_message(rewards_result: dict) -> str:
     
     message = f"🎁 **待领取奖励** (共 {total_count} 笔，{total_points:,} 积分)\n\n"
     
-    for reward in rewards:
+    # 按照reward_day排序，确保第1天、第2天、第3天的顺序正确
+    sorted_rewards = sorted(rewards, key=lambda x: x['reward_day'])
+    
+    for reward in sorted_rewards:
         message += f"⛏️ {reward['card_type']}矿工卡\n"
         message += f"   💰 奖励积分: {reward['reward_points']:,}\n"
         message += f"   📅 第{reward['reward_day']}天奖励\n"
@@ -583,17 +592,22 @@ def _build_mining_management_message(user_cards_result: dict) -> str:
     """构建矿工卡管理消息"""
     user_cards = user_cards_result.get("cards", [])
     total_cards = user_cards_result.get("total_count", 0)
+    active_count = user_cards_result.get("active_count", 0)
     current_page = user_cards_result.get("current_page", 1)
     total_pages = user_cards_result.get("total_pages", 1)
     
     message = f"📊 **矿工卡管理**\n\n"
-    message += f"📈 总矿工卡: **{total_cards}** 张\n\n"
+    message += f"📈 总矿工卡: **{total_cards}** 张\n"
+    message += f"⛏️ 有效矿工卡: **{active_count}** 张\n\n"
     
     if not user_cards:
         message += "暂无矿工卡，快去购买吧！\n\n"
     else:
+        # 将卡片按状态排序：挖矿中(1)的排在前面，已完成(2)的排在后面
+        sorted_cards = sorted(user_cards, key=lambda x: (x["status"], -int(x["remaining_days"])))
+        
         message += "**您的矿工卡:**\n"
-        for i, card in enumerate(user_cards, 1):
+        for i, card in enumerate(sorted_cards, 1):
             status_emoji = "⛏️" if card["status"] == 1 else "✅" if card["status"] == 2 else "❌"
             status_text = "挖矿中" if card["status"] == 1 else "已完成" if card["status"] == 2 else "已过期"
             
@@ -694,7 +708,10 @@ def _build_mining_history_message(history_result: dict) -> str:
     else:
         message += f"**历史记录** (共 {total_count} 条)\n\n"
         
-        for i, reward in enumerate(rewards, 1):
+        # 按照reward_day排序
+        sorted_rewards = sorted(rewards, key=lambda x: (x['mining_card_id'], x['reward_day']))
+        
+        for i, reward in enumerate(sorted_rewards, 1):
             status_emoji = "✅" if reward["status"] == 2 else "⏳"
             status_text = "已领取" if reward["status"] == 2 else "待领取"
             
@@ -850,12 +867,13 @@ class MiningHandler:
                 await event.answer(f"❌ {mining_info['message']}")
                 return
             
-            # 获取用户的矿工卡列表（分页）
+            # 获取用户的矿工卡列表（分页），只显示有效的矿工卡
             cards_per_page = 5
             user_cards_result = await mining_service.get_user_mining_cards(
                 telegram_id=telegram_id, 
                 page=1, 
-                limit=cards_per_page
+                limit=cards_per_page,
+                only_active=True  # 只获取有效的矿工卡
             )
             
             if not user_cards_result["success"]:
@@ -1027,15 +1045,36 @@ class MiningHandler:
         """构建矿工卡选择消息"""
         wallet_balance = mining_info["wallet_balance"]
         cards_info = mining_info["cards_info"]
+        user_cards = user_cards_result.get("cards", [])
+        total_cards = user_cards_result.get("total_count", 0)
+        active_count = user_cards_result.get("active_count", 0)
+        current_page = user_cards_result.get("current_page", 1)
+        total_pages = user_cards_result.get("total_pages", 1)
+        
+        # 只显示剩余天数大于0的卡片
+        active_cards = [card for card in user_cards if card["remaining_days"] > 0]
         
         message = f"🔧 **购买矿工卡**\n\n"
-        message += f"💰 钱包余额: **{wallet_balance:.2f}U**\n\n"
+        message += f"💰 钱包余额: **{wallet_balance:.2f}U**\n"
+        message += f"📊 有效矿工卡: **{active_count}** 张\n\n"
+        
+        # 显示用户现有的矿工卡（当前页）
+        if active_cards:
+            message += "**您现有的矿工卡:**\n"
+            for card in active_cards:
+                status_emoji = "⛏️" if card["status"] == 1 else "✅" if card["status"] == 2 else "❌"
+                message += f"{status_emoji} {card['card_type']}矿工卡\n"
+                message += f"   💰 每日积分: {card['daily_points']:,}\n"
+                message += f"   ⏰ 剩余天数: {card['remaining_days']}天\n"
+                message += f"   💎 已获得: {card['earned_points']:,}积分\n"
+                message += f"   📅 结束时间: {card['end_time'][:10]}\n\n"
+        
         message += "**选择矿工卡类型:**\n"
         
         for card_type, info in cards_info.items():
             status_emoji = "✅" if info["can_purchase"] else "❌"
             message += f"{status_emoji} **{info['name']}**\n"
-            message += f"   价格: {info['cost_usdt']}U\n"
+            message += f"   价格: {info['cost_usdt']:.2f}U\n"
             message += f"   每日积分: {info['daily_points']:,}\n"
             message += f"   持续天数: {info['duration_days']}天\n"
             message += f"   总积分: {info['total_points']:,}\n"
@@ -1049,6 +1088,9 @@ class MiningHandler:
                     message += f"   ⚠️ 余额不足\n"
             
             message += "\n"
+        
+        if total_pages > 1:
+            message += f"📄 第 {current_page} 页，共 {total_pages} 页\n\n"
         
         message += "💡 **小贴士:** 高级矿工卡每日挖取的积分更多！"
         
@@ -1133,6 +1175,95 @@ class MiningHandler:
         
         return message
     
+    def _build_mining_management_message(self, user_cards_result: dict) -> str:
+        """构建矿工卡管理消息"""
+        user_cards = user_cards_result.get("cards", [])
+        total_cards = user_cards_result.get("total_count", 0)
+        active_count = user_cards_result.get("active_count", 0)
+        current_page = user_cards_result.get("current_page", 1)
+        total_pages = user_cards_result.get("total_pages", 1)
+        
+        message = f"📊 **矿工卡管理**\n\n"
+        message += f"📈 总矿工卡: **{total_cards}** 张\n"
+        message += f"⛏️ 有效矿工卡: **{active_count}** 张\n\n"
+        
+        if not user_cards:
+            message += "暂无矿工卡，快去购买吧！\n\n"
+        else:
+            # 将卡片按状态排序：挖矿中(1)的排在前面，已完成(2)的排在后面
+            sorted_cards = sorted(user_cards, key=lambda x: (x["status"], -int(x["remaining_days"])))
+            
+            message += "**您的矿工卡:**\n"
+            for i, card in enumerate(sorted_cards, 1):
+                status_emoji = "⛏️" if card["status"] == 1 else "✅" if card["status"] == 2 else "❌"
+                status_text = "挖矿中" if card["status"] == 1 else "已完成" if card["status"] == 2 else "已过期"
+                
+                message += f"{i}. {status_emoji} **{card['card_type']}矿工卡** ({status_text})\n"
+                message += f"   💰 每日积分: {card['daily_points']:,}\n"
+                message += f"   ⏰ 剩余天数: {card['remaining_days']}天\n"
+                message += f"   💎 已获得: {card['earned_points']:,}积分\n"
+                message += f"   📅 结束时间: {card['end_time'][:10]}\n\n"
+        
+        if total_pages > 1:
+            message += f"📄 第 {current_page} 页，共 {total_pages} 页\n\n"
+        
+        return message
+    
+    def _build_mining_management_keyboard(self, user_cards_result: dict, telegram_id: int):
+        """构建矿工卡管理键盘"""
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        
+        buttons = []
+        
+        # 分页按钮
+        current_page = user_cards_result.get("current_page", 1)
+        total_pages = user_cards_result.get("total_pages", 1)
+        
+        if total_pages > 1:
+            row = []
+            
+            # 上一页按钮
+            if current_page > 1:
+                row.append(InlineKeyboardButton(
+                    text="⬅️ 上一页",
+                    callback_data=f"mining_manage_page_{telegram_id}_{current_page - 1}"
+                ))
+            
+            # 页码信息
+            row.append(InlineKeyboardButton(
+                text=f"📄 {current_page}/{total_pages}",
+                callback_data="mining_manage_info"
+            ))
+            
+            # 下一页按钮
+            if current_page < total_pages:
+                row.append(InlineKeyboardButton(
+                    text="下一页 ➡️",
+                    callback_data=f"mining_manage_page_{telegram_id}_{current_page + 1}"
+                ))
+            
+            buttons.append(row)
+        
+        # 功能按钮
+        buttons.append([
+            InlineKeyboardButton(
+                text="🔧 购买新矿工卡",
+                callback_data="mining_cards"
+            ),
+            InlineKeyboardButton(
+                text="🎁 领取奖励",
+                callback_data="mining_rewards"
+            )
+        ])
+        
+        # 返回按钮
+        buttons.append([InlineKeyboardButton(
+            text="🔙 返回挖矿菜单",
+            callback_data="mining_menu"
+        )])
+        
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
     def _build_mining_history_message(self, history_result: dict) -> str:
         """构建挖矿历史消息"""
         rewards = history_result["rewards"]
@@ -1164,7 +1295,10 @@ class MiningHandler:
         else:
             message += f"**历史记录** (共 {total_count} 条)\n\n"
             
-            for i, reward in enumerate(rewards, 1):
+            # 按照reward_day排序
+            sorted_rewards = sorted(rewards, key=lambda x: (x['mining_card_id'], x['reward_day']))
+            
+            for i, reward in enumerate(sorted_rewards, 1):
                 status_emoji = "✅" if reward["status"] == 2 else "⏳"
                 status_text = "已领取" if reward["status"] == 2 else "待领取"
                 
@@ -1185,7 +1319,7 @@ class MiningHandler:
     
     def _build_mining_history_keyboard(self, history_result: dict, telegram_id: int):
         """构建挖矿历史分页键盘"""
-        from telethon.tl.types import KeyboardButtonCallback
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         
         buttons = []
         
@@ -1198,30 +1332,30 @@ class MiningHandler:
             
             # 上一页按钮
             if current_page > 1:
-                row.append(KeyboardButtonCallback(
+                row.append(InlineKeyboardButton(
                     text="⬅️ 上一页",
-                    data=f"mining_history_page_{telegram_id}_{current_page - 1}".encode()
+                    callback_data=f"mining_history_page_{telegram_id}_{current_page - 1}"
                 ))
             
             # 页码信息
-            row.append(KeyboardButtonCallback(
+            row.append(InlineKeyboardButton(
                 text=f"📄 {current_page}/{total_pages}",
-                data="mining_history_info".encode()
+                callback_data="mining_history_info"
             ))
             
             # 下一页按钮
             if current_page < total_pages:
-                row.append(KeyboardButtonCallback(
+                row.append(InlineKeyboardButton(
                     text="下一页 ➡️",
-                    data=f"mining_history_page_{telegram_id}_{current_page + 1}".encode()
+                    callback_data=f"mining_history_page_{telegram_id}_{current_page + 1}"
                 ))
             
             buttons.append(row)
         
         # 返回按钮
-        buttons.append([KeyboardButtonCallback(
+        buttons.append([InlineKeyboardButton(
             text="🔙 返回挖矿菜单",
-            data="mining_menu".encode()
+            callback_data="mining_menu"
         )])
         
-        return buttons 
+        return InlineKeyboardMarkup(inline_keyboard=buttons) 

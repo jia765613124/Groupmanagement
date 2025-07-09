@@ -112,7 +112,7 @@ class FishingConfig:
     ]
     
     # 四类鱼通知消息模板
-    LEGENDARY_FISH_NOTIFICATION = "恭喜钓鱼佬{player_name}钓上来一条价值{fish_points:,}分的{fish_name}鱼，让我们恭喜这个逼。钓鱼入口：{subscription_link}"
+    LEGENDARY_FISH_NOTIFICATION = "恭喜钓鱼佬{player_name}钓上来一条价值{fish_points:,}分的{fish_name}，让我们恭喜这个逼。钓鱼入口：{subscription_link}"
     
     @classmethod
     def get_fish_by_rod_and_category(cls, rod_type: str, category: str) -> Fish:

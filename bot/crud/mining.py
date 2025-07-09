@@ -128,7 +128,7 @@ class CRUDMiningCard(CRUDBase[MiningCard]):
         stmt = select(func.count(MiningCard.id)).where(
             MiningCard.telegram_id == telegram_id,
             MiningCard.card_type == card_type,
-            MiningCard.status == 1  # 挖矿中
+            MiningCard.status == 1  # 只计算挖矿中的矿工卡，不计算已完成的矿工卡
         )
         result = await session.execute(stmt)
         return result.scalar() or 0
@@ -320,14 +320,15 @@ class CRUDMiningCard(CRUDBase[MiningCard]):
         telegram_id: int
     ) -> Dict[str, Any]:
         """获取用户挖矿汇总信息"""
-        # 统计各类型矿工卡数量
+        # 统计各类型矿工卡数量，只计算挖矿中的矿工卡
         stmt = select(
             MiningCard.card_type,
             func.count(MiningCard.id).label('count'),
             func.sum(MiningCard.total_points).label('total_points'),
             func.sum(MiningCard.earned_points).label('earned_points')
         ).where(
-            MiningCard.telegram_id == telegram_id
+            MiningCard.telegram_id == telegram_id,
+            MiningCard.status == 1  # 只统计挖矿中的矿工卡，不计算已完成的
         ).group_by(MiningCard.card_type)
         
         result = await session.execute(stmt)
@@ -349,6 +350,11 @@ class CRUDMiningCard(CRUDBase[MiningCard]):
                 self.model.telegram_id == telegram_id,
                 self.model.is_deleted == False
             ).order_by(
+                # 按状态排序：挖矿中(1)的排在前面，已完成(2)的排在后面
+                self.model.status,
+                # 对于相同状态的卡，按剩余天数降序排列（剩余天数多的排在前面）
+                self.model.remaining_days.desc(),
+                # 最后按创建时间降序
                 self.model.created_at.desc()
             ).limit(limit).offset(offset)
             
@@ -487,6 +493,27 @@ class CRUDMiningCard(CRUDBase[MiningCard]):
             await session.rollback()
             return False
 
+    async def get_active_user_cards_count(self, session, telegram_id: int):
+        """获取用户的有效矿工卡总数（剩余天数>0或状态为挖矿中）"""
+        try:
+            query = select(func.count(self.model.id)).where(
+                self.model.telegram_id == telegram_id,
+                self.model.is_deleted == False,
+                or_(
+                    self.model.status == 1,  # 挖矿中
+                    self.model.remaining_days > 0  # 剩余天数大于0
+                )
+            )
+            
+            result = await session.execute(query)
+            count = result.scalar()
+            
+            return count or 0
+            
+        except Exception as e:
+            logger.error(f"获取用户有效矿工卡总数失败: {e}")
+            return 0
+
 
 class CRUDMiningReward(CRUDBase[MiningReward]):
     async def create_mining_reward(
@@ -553,7 +580,7 @@ class CRUDMiningReward(CRUDBase[MiningReward]):
         stmt = select(MiningReward).where(
             MiningReward.telegram_id == telegram_id,
             MiningReward.status == 1  # 待领取
-        ).order_by(MiningReward.reward_date.desc()).offset(skip).limit(limit)
+        ).order_by(MiningReward.reward_day.asc()).offset(skip).limit(limit)
         result = await session.execute(stmt)
         return result.scalars().all()
 
@@ -636,6 +663,19 @@ class CRUDMiningReward(CRUDBase[MiningReward]):
         )
         result = await session.execute(stmt)
         return result.scalar() or 0
+        
+    async def get_card_rewards(
+        self,
+        session: AsyncSession,
+        *,
+        card_id: int
+    ) -> List[MiningReward]:
+        """获取指定矿工卡的奖励记录"""
+        stmt = select(MiningReward).where(
+            MiningReward.mining_card_id == card_id
+        ).order_by(MiningReward.reward_day.asc())
+        result = await session.execute(stmt)
+        return result.scalars().all()
 
 
 class CRUDMiningStatistics(CRUDBase[MiningStatistics]):

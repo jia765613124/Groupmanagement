@@ -95,7 +95,7 @@ class MiningService:
                 }
                 
             # 获取矿工卡配置
-            card_config = MiningConfig.get_card_config(card_type)
+            card_config = MiningConfig.get_mining_card(card_type)
             if not card_config:
                 return {
                     "success": False,
@@ -452,6 +452,9 @@ class MiningService:
         try:
             if not reward_date:
                 reward_date = date.today()
+            elif isinstance(reward_date, datetime):
+                # 如果传入的是datetime对象，转换为date对象
+                reward_date = reward_date.date()
                 
             logger.info(f"开始处理挖矿奖励，日期：{reward_date}")
             
@@ -538,8 +541,19 @@ class MiningService:
                 "processed_count": 0
             }
     
-    async def get_user_mining_cards(self, telegram_id: int, page: int = 1, limit: int = 10):
-        """获取用户的矿工卡列表（分页）"""
+    async def get_user_mining_cards(self, telegram_id: int, page: int = 1, limit: int = 10, only_active: bool = False):
+        """
+        获取用户的矿工卡列表（分页）
+        
+        Args:
+            telegram_id: 用户ID
+            page: 页码
+            limit: 每页数量
+            only_active: 是否只返回有效的矿工卡（剩余天数>0或状态为挖矿中）
+            
+        Returns:
+            矿工卡列表和分页信息
+        """
         try:
             # 直接使用导入的mining_card实例，而不是通过self.uow访问
             
@@ -560,13 +574,29 @@ class MiningService:
                 telegram_id=telegram_id
             )
             
+            # 获取有效矿工卡数量
+            active_count = await mining_card.get_active_user_cards_count(
+                session=self.uow.session,
+                telegram_id=telegram_id
+            )
+            
+            # 如果只需要有效的矿工卡，过滤掉无效的
+            if only_active:
+                cards = [card for card in cards if card["remaining_days"] > 0 or card["status"] == 1]
+                total_count = active_count  # 使用有效卡数量作为总数
+            
             # 计算总页数
-            total_pages = (total_count + limit - 1) // limit
+            total_pages = (total_count + limit - 1) // limit if total_count > 0 else 1
+            
+            # 确保页码在有效范围内
+            if page > total_pages:
+                page = total_pages
             
             return {
                 "success": True,
                 "cards": cards,
                 "total_count": total_count,
+                "active_count": active_count,
                 "current_page": page,
                 "total_pages": total_pages,
                 "limit": limit
@@ -579,6 +609,7 @@ class MiningService:
                 "message": f"获取矿工卡列表失败: {e}",
                 "cards": [],
                 "total_count": 0,
+                "active_count": 0,
                 "current_page": page,
                 "total_pages": 0,
                 "limit": limit

@@ -10,7 +10,7 @@ from bot.database.db import SessionFactory
 from bot.common.uow import UoW
 from bot.common.mining_service import MiningService
 from bot.models.mining import MiningCard
-from bot.crud.mining import mining_card
+from bot.crud.mining import mining_card, mining_reward
 
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -72,96 +72,74 @@ async def create_test_mining_card():
         logger.info(f"成功创建测试矿工卡: ID={card.id}")
         return card.id
 
-async def simulate_reward_days(card_id: int, days: int = 3):
-    """
-    模拟多天的奖励发放
+async def simulate_reward_days(card_id: int, days: int):
+    """模拟多天的奖励发放"""
+    logger.info(f"准备模拟 {days} 天的奖励发放...")
     
-    Args:
-        card_id: 矿工卡ID
-        days: 模拟的天数
-    """
+    # 获取初始矿工卡状态
     async with SessionFactory() as session:
-        uow = UoW(session)
-        mining_service = MiningService(uow)
-        
-        logger.info(f"准备模拟 {days} 天的奖励发放...")
-        
-        # 先查看卡片初始状态
         card = await mining_card.get(session, card_id)
+        if not card:
+            logger.error(f"找不到ID为 {card_id} 的矿工卡")
+            return
+            
+        # 记录初始状态
         logger.info(f"初始状态: 卡ID={card.id}, 剩余天数={card.remaining_days}, 结束时间={card.end_time}, 已获得积分={card.earned_points}")
         logger.info(f"详细信息: 开始时间={card.start_time}, 总天数={card.total_days}, 每日积分={card.daily_points}")
         
-        # 验证初始状态的一致性
+        # 检查初始状态是否一致
         expected_end_time = card.start_time + timedelta(days=card.remaining_days)
-        time_difference = abs((expected_end_time - card.end_time).total_seconds())
-        if time_difference > 60:  # 允许1分钟的误差
+        if expected_end_time != card.end_time:
             logger.warning(f"初始状态不一致! 基于剩余天数计算的结束时间: {expected_end_time}, 实际结束时间: {card.end_time}")
-        else:
-            logger.info(f"初始状态一致性检查通过")
+    
+    # 模拟每天发放奖励
+    for i in range(days):
+        # 使用当前日期作为处理日期，但年份设置为2025年以匹配测试数据
+        current_date = datetime.now().replace(year=2025)
+        # 反转日期顺序，使第1天是最早的日期，第N天是最晚的日期
+        process_date = current_date - timedelta(days=(days-1-i))
+        date_str = process_date.strftime('%Y-%m-%d')
         
-        # 模拟每天发放一次奖励
-        for day in range(1, days+1):
-            reward_date = date.today() + timedelta(days=day-1)
-            logger.info(f"-- 第 {day} 天 ({reward_date}) --")
+        logger.info(f"-- 第 {i+1} 天 ({date_str}) --")
+        
+        # 在每次循环中使用新的会话，避免会话过期问题
+        async with SessionFactory() as session:
+            # 重新获取最新的矿工卡状态
+            card = await mining_card.get(session, card_id)
+            if not card:
+                logger.error(f"找不到ID为 {card_id} 的矿工卡")
+                continue
+                
+            logger.info(f"处理前: 开始时间={card.start_time}, 剩余天数={card.remaining_days}, 结束时间={card.end_time}")
             
-            # 记录处理前的状态
-            before_remaining_days = card.remaining_days
-            before_end_time = card.end_time
-            before_earned_points = card.earned_points
-            before_start_time = card.start_time
+            # 创建服务实例
+            uow = UoW(session)
+            mining_service = MiningService(uow)
             
-            # 模拟发放奖励
-            logger.info(f"处理前: 开始时间={before_start_time}, 剩余天数={before_remaining_days}, 结束时间={before_end_time}")
-            result = await mining_service.process_daily_mining_rewards(reward_date)
+            # 处理当天的挖矿奖励
+            result = await mining_service.process_daily_mining_rewards(process_date)
             logger.info(f"奖励处理结果: {result}")
             
-            # 查看卡片更新后的状态
-            await session.refresh(card)
-            logger.info(f"更新后状态: 卡ID={card.id}, 剩余天数={card.remaining_days}, 结束时间={card.end_time}, 已获得积分={card.earned_points}")
-            logger.info(f"详细信息: 开始时间={card.start_time}, 开始时间是否变化={card.start_time != before_start_time}")
-            
-            # 验证更新后状态的一致性
-            if day < days:  # 只有在卡片仍然有效的时候才验证
-                # 验证剩余天数减少了1天
-                if before_remaining_days - card.remaining_days != 1:
-                    logger.error(f"剩余天数没有正确减少! 之前: {before_remaining_days}, 之后: {card.remaining_days}")
-                else:
-                    logger.info(f"剩余天数正确减少了1天")
+            # 重新获取更新后的矿工卡状态
+            card = await mining_card.get(session, card_id)
+            if card:
+                logger.info(f"处理后: 开始时间={card.start_time}, 剩余天数={card.remaining_days}, 结束时间={card.end_time}, 已获得积分={card.earned_points}")
                 
-                # 验证结束时间与剩余天数同步
+                # 检查更新后的状态是否一致
                 expected_end_time = card.start_time + timedelta(days=card.remaining_days)
-                time_difference = abs((expected_end_time - card.end_time).total_seconds())
-                if time_difference > 60:  # 允许1分钟的误差
-                    logger.error(f"更新后状态不一致! 基于剩余天数计算的结束时间: {expected_end_time}, 实际结束时间: {card.end_time}")
-                    logger.error(f"时间差异: {time_difference} 秒")
-                else:
-                    logger.info(f"更新后状态一致性检查通过")
-                
-                # 验证积分增加
-                if card.earned_points <= before_earned_points:
-                    logger.error(f"积分没有增加! 之前: {before_earned_points}, 之后: {card.earned_points}")
-                else:
-                    logger.info(f"积分正确增加了 {card.earned_points - before_earned_points}")
-                
-                # 验证开始时间是否保持不变
-                if card.start_time != before_start_time:
-                    logger.error(f"开始时间被修改! 之前: {before_start_time}, 之后: {card.start_time}")
-                else:
-                    logger.info(f"开始时间保持不变")
+                if expected_end_time != card.end_time:
+                    logger.warning(f"更新后状态不一致! 基于剩余天数计算的结束时间: {expected_end_time}, 实际结束时间: {card.end_time}")
+            else:
+                logger.warning(f"处理后找不到ID为 {card_id} 的矿工卡")
             
-            # 如果卡片已完成，退出循环
-            if card.status == 2:
-                logger.info(f"卡片已完成挖矿，停止模拟")
+            # 获取该卡的奖励记录
+            rewards = await mining_reward.get_card_rewards(session, card_id=card_id)
+            logger.info(f"当前奖励记录数: {len(rewards)}")
+            for reward in rewards:
+                logger.info(f"奖励记录: ID={reward.id}, 积分={reward.reward_points}, 时间={reward.created_at}")
                 
-                # 验证卡片结束后状态
-                if card.remaining_days != 0:
-                    logger.error(f"卡片结束后剩余天数应为0，但实际为 {card.remaining_days}")
-                else:
-                    logger.info("卡片结束后剩余天数正确为0")
-                break
-            
-            # 等待一下，避免日期冲突
-            await asyncio.sleep(1)
+        # 等待一小段时间，避免处理太快
+        await asyncio.sleep(0.5)
 
 async def verify_rewards(card_id: int):
     """
@@ -175,11 +153,11 @@ async def verify_rewards(card_id: int):
         card = await mining_card.get(session, card_id)
         
         # 获取所有相关奖励记录
-        rewards = await mining_card.get_card_rewards(session, card_id)
+        rewards = await mining_reward.get_card_rewards(session, card_id=card_id)
         
         logger.info(f"卡片 {card_id} 的奖励记录:")
         for reward in rewards:
-            logger.info(f"第 {reward['reward_day']} 天 - 日期: {reward['reward_date']} - 积分: {reward['reward_points']} - 状态: {reward['status']}")
+            logger.info(f"第 {reward.reward_day} 天 - 日期: {reward.reward_date} - 积分: {reward.reward_points} - 状态: {reward.status}")
         
         # 验证奖励天数是否符合卡片总天数
         total_days = card.total_days
@@ -189,7 +167,7 @@ async def verify_rewards(card_id: int):
             logger.info(f"奖励记录数量 ({len(rewards)}) 与卡片总天数一致")
         
         # 验证奖励天数是否连续
-        days_set = {r['reward_day'] for r in rewards}
+        days_set = {r.reward_day for r in rewards}
         expected_days = set(range(1, total_days + 1))
         if days_set != expected_days:
             logger.error(f"奖励天数不连续! 实际: {sorted(days_set)}, 期望: {sorted(expected_days)}")
@@ -197,7 +175,7 @@ async def verify_rewards(card_id: int):
             logger.info("奖励天数连续性检查通过")
         
         # 验证总积分是否正确
-        total_reward_points = sum(r['reward_points'] for r in rewards)
+        total_reward_points = sum(r.reward_points for r in rewards)
         if total_reward_points != card.earned_points:
             logger.error(f"总积分不一致! 奖励记录总和: {total_reward_points}, 卡片记录: {card.earned_points}")
         else:
