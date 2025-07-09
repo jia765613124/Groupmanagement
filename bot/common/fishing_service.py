@@ -163,6 +163,7 @@ class FishingService:
                         notification = FishingConfig.format_legendary_notification(
                             player_name=account.remarks or f"用户{telegram_id}",
                             fish_name=fishing_result["fish"].name,
+                            fish_points=earned_points,  # 传入实际积分
                             subscription_link=subscription_link
                         )
                     

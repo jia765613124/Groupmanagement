@@ -93,10 +93,15 @@ async def handle_fishing_callback(callback_query, rod_type: str):
         fishing_service = await get_fishing_service()
         
         # 执行钓鱼
+        from bot.config import get_config
+        config = get_config()
+        # 如果配置中有subscription_link则使用，否则使用默认值
+        subscription_link = getattr(config, "subscription_link", "https://t.me/your_subscription")
+        
         result = await fishing_service.fish(
             telegram_id=telegram_id,
             rod_type=rod_type,
-            subscription_link="https://t.me/your_subscription"  # 替换为实际的订阅号链接
+            subscription_link=subscription_link
         )
         
         # 构建结果消息
@@ -301,10 +306,10 @@ def _build_fishing_history_message(history_result: dict) -> str:
 
 def _get_notification_group_ids() -> list:
     """获取需要发送通知的群组ID列表"""
-    # 这里可以从配置文件或环境变量获取群组ID
-    # 示例：从环境变量获取，格式为逗号分隔的群组ID
-    import os
-    group_ids_str = os.getenv("FISHING_NOTIFICATION_GROUPS", "")
+    # 从配置中获取群组ID
+    from bot.config import get_config
+    config = get_config()
+    group_ids_str = config.fishing_notification_groups
     if group_ids_str:
         return [int(gid.strip()) for gid in group_ids_str.split(",") if gid.strip()]
     return []
@@ -379,10 +384,17 @@ class FishingHandler:
             
             # 执行钓鱼
             fishing_service = await self._get_fishing_service()
+            
+            # 从配置获取订阅链接
+            from bot.config import get_config
+            config = get_config()
+            # 如果配置中有subscription_link则使用，否则使用默认值
+            subscription_link = getattr(config, "subscription_link", "https://t.me/your_subscription")
+            
             result = await fishing_service.fish(
                 telegram_id=telegram_id,
                 rod_type=rod_type,
-                subscription_link="https://t.me/your_subscription"  # 替换为实际的订阅号链接
+                subscription_link=subscription_link
             )
             
             # 构建结果消息
@@ -542,10 +554,10 @@ class FishingHandler:
     
     def _get_notification_group_ids(self) -> list:
         """获取需要发送通知的群组ID列表"""
-        # 这里可以从配置文件或环境变量获取群组ID
-        # 示例：从环境变量获取，格式为逗号分隔的群组ID
-        import os
-        group_ids_str = os.getenv("FISHING_NOTIFICATION_GROUPS", "")
+        # 从配置中获取群组ID
+        from bot.config import get_config
+        config = get_config()
+        group_ids_str = config.fishing_notification_groups
         if group_ids_str:
             return [int(gid.strip()) for gid in group_ids_str.split(",") if gid.strip()]
         return [] 

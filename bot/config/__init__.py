@@ -62,6 +62,10 @@ class Config(BaseSettings):
     # 钱包配置
     WALLET_ADDRESS: str  # 钱包地址
 
+    # 钓鱼通知群组配置
+    fishing_notification_groups: str = ""  # 通知群组ID，逗号分隔
+    subscription_link: str = "https://t.me/your_channel"  # 钓鱼通知中的订阅链接
+
     @property
     def MYSQL_DSN(self) -> str:
         """

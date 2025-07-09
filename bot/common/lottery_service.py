@@ -423,7 +423,8 @@ class LotteryService:
                     self.uow.session, 
                     telegram_id=telegram_id,
                     skip=offset,
-                    limit=limit
+                    limit=limit,
+                    status=3  # 只查已结算
                 )
                 
                 # 获取总数

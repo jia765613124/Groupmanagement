@@ -64,7 +64,7 @@ class FishingConfig:
             fishes=[
                 Fish("河虾", 100, "一类鱼", "虽然小，但也是收获！"),
                 Fish("泥鳅", 300, "一类鱼", "滑溜溜的，手感不错！"),
-                Fish("金枪鱼", 500, "一类鱼", "肉质鲜美，值得期待！")
+                Fish("白条", 500, "一类鱼", "肉质鲜美，值得期待！")
             ],
             description="常见鱼类，容易钓到"
         ),
@@ -112,7 +112,7 @@ class FishingConfig:
     ]
     
     # 四类鱼通知消息模板
-    LEGENDARY_FISH_NOTIFICATION = "恭喜钓鱼佬{player_name}钓上来一条价值十万分的{fish_name}鱼，让我们恭喜这个逼。钓鱼入口：{subscription_link}"
+    LEGENDARY_FISH_NOTIFICATION = "恭喜钓鱼佬{player_name}钓上来一条价值{fish_points:,}分的{fish_name}鱼，让我们恭喜这个逼。钓鱼入口：{subscription_link}"
     
     @classmethod
     def get_fish_by_rod_and_category(cls, rod_type: str, category: str) -> Fish:
@@ -161,7 +161,8 @@ class FishingConfig:
             }
         
         fish = cls.get_fish_by_rod_and_category(rod_type, category)
-        is_legendary = category == "四类鱼"
+        # 测试用：二类鱼、三类鱼和四类鱼都设为传说鱼，触发通知
+        is_legendary = category in ["二类鱼", "三类鱼", "四类鱼"]
         
         return {
             "success": True,
@@ -188,11 +189,12 @@ class FishingConfig:
         return {rod_type: cls.get_rod_info(rod_type) for rod_type in cls.FISHING_RODS}
     
     @classmethod
-    def format_legendary_notification(cls, player_name: str, fish_name: str, subscription_link: str) -> str:
+    def format_legendary_notification(cls, player_name: str, fish_name: str, fish_points: int, subscription_link: str) -> str:
         """格式化传说鱼通知消息"""
         return cls.LEGENDARY_FISH_NOTIFICATION.format(
             player_name=player_name,
             fish_name=fish_name,
+            fish_points=fish_points,
             subscription_link=subscription_link
         )
 
