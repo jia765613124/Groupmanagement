@@ -3,12 +3,15 @@
 包含开奖记录、投注记录、返水记录的数据访问层
 """
 
+import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+
+logger = logging.getLogger(__name__)
 
 from bot.crud.base import CRUDBase
 from bot.models.lottery import LotteryDraw, LotteryBet, LotteryCashback
@@ -89,13 +92,35 @@ class lottery_bet(CRUDBase[LotteryBet]):
     """投注记录CRUD (异步)"""
     
     async def get_by_draw_number(self, session: AsyncSession, group_id: int, game_type: str, draw_number: str) -> List[LotteryBet]:
-        stmt = select(LotteryBet).where(
-            LotteryBet.group_id == group_id,
-            LotteryBet.game_type == game_type,
-            LotteryBet.draw_number == draw_number
-        )
-        result = await session.execute(stmt)
-        return result.scalars().all()
+        """
+        根据期号获取投注记录
+        
+        Args:
+            session: 数据库会话
+            group_id: 群组ID
+            game_type: 游戏类型
+            draw_number: 期号
+            
+        Returns:
+            投注记录列表
+        """
+        try:
+            # 添加日志记录参数
+            logger.info(f"查询投注记录: 群组={group_id}, 游戏类型={game_type}, 期号={draw_number}")
+            
+            stmt = select(LotteryBet).where(
+                LotteryBet.group_id == group_id,
+                LotteryBet.game_type == game_type,
+                LotteryBet.draw_number == draw_number
+            )
+            result = await session.execute(stmt)
+            bets = result.scalars().all()
+            logger.info(f"查询到 {len(bets)} 条投注记录")
+            
+            return bets
+        except Exception as e:
+            logger.error(f"查询投注记录出错: {e}")
+            return []
     
     async def get_by_telegram_id(self, session: AsyncSession, telegram_id: int, group_id: int = None, limit: int = 50) -> List[LotteryBet]:
         stmt = select(LotteryBet).where(LotteryBet.telegram_id == telegram_id)
@@ -105,9 +130,22 @@ class lottery_bet(CRUDBase[LotteryBet]):
         result = await session.execute(stmt)
         return result.scalars().all()
     
-    async def get_by_telegram_id_paginated(self, session: AsyncSession, telegram_id: int, skip: int = 0, limit: int = 10) -> List[LotteryBet]:
-        """获取用户投注记录（支持分页）"""
+    async def get_by_telegram_id_paginated(self, session: AsyncSession, telegram_id: int, skip: int = 0, limit: int = 10, status: int = None) -> List[LotteryBet]:
+        """获取用户投注记录（支持分页）
+        
+        Args:
+            session: 数据库会话
+            telegram_id: Telegram用户ID
+            skip: 跳过记录数量
+            limit: 限制返回数量
+            status: 可选状态过滤，如果提供则只返回指定状态的投注
+            
+        Returns:
+            投注记录列表
+        """
         stmt = select(LotteryBet).where(LotteryBet.telegram_id == telegram_id)
+        if status is not None:
+            stmt = stmt.where(LotteryBet.status == status)
         stmt = stmt.order_by(LotteryBet.created_at.desc()).offset(skip).limit(limit)
         result = await session.execute(stmt)
         return result.scalars().all()

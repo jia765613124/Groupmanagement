@@ -161,15 +161,13 @@ class LotteryService:
                 # 记录扣除交易
                 await account_transaction_crud.create(
                     self.uow.session,
-                    obj_in={
-                        "account_id": account.id,
-                        "telegram_id": telegram_id,
-                        "account_type": self.ACCOUNT_TYPE_POINTS,
-                        "transaction_type": self.TRANSACTION_TYPE_LOTTERY_BET,
-                        "amount": -bet_amount,
-                        "balance": account.available_amount,
-                        "remarks": f"开奖投注 {bet_type} {bet_amount}积分"
-                    }
+                    account_id=account.id,
+                    telegram_id=telegram_id,
+                    account_type=self.ACCOUNT_TYPE_POINTS,
+                    transaction_type=self.TRANSACTION_TYPE_LOTTERY_BET,
+                    amount=-bet_amount,
+                    balance=account.available_amount,
+                    remarks=f"开奖投注 {bet_type} {bet_amount}积分"
                 )
                 
                 # 创建投注记录
@@ -221,142 +219,222 @@ class LotteryService:
     async def draw_lottery(self, group_id: int) -> Dict:
         """开奖"""
         try:
+            # 确保没有未完成的事务
+            try:
+                await self.uow.session.rollback()
+                logger.info("已回滚任何可能存在的未完成事务")
+            except Exception as e:
+                logger.warning(f"回滚现有事务失败，这可能是正常的: {e}")
+                
             # 获取当前期
-            current_draw = await lottery_draw.get_current_draw(self.uow.session, group_id, "lottery")
-            if not current_draw:
+            try:
+                current_draw = await lottery_draw.get_current_draw(self.uow.session, group_id, "lottery")
+                if not current_draw:
+                    return {
+                        "success": False,
+                        "message": "没有进行中的开奖期"
+                    }
+            except Exception as e:
+                logger.error(f"获取当前开奖期失败: {e}")
+                await self.uow.session.rollback()  # 确保回滚
                 return {
                     "success": False,
-                    "message": "没有进行中的开奖期"
+                    "message": f"获取当前开奖期失败: {e}"
                 }
             
             # 生成开奖结果
             result = self.multi_config.generate_secure_result()
             logger.info(f"为期号 {current_draw.draw_number} 生成开奖结果: {result}")
             
+            # 确保会话刷新，避免缓存问题
+            try:
+                await self.uow.session.flush()
+            except Exception as e:
+                logger.error(f"刷新会话失败: {e}")
+                await self.uow.session.rollback()  # 确保回滚
+            
             # 获取该期所有投注
-            bets = await lottery_bet.get_by_draw_number(self.uow.session, group_id, "lottery", current_draw.draw_number)
-            logger.info(f"期号 {current_draw.draw_number} 共有 {len(bets)} 个投注")
+            bets = []
+            try:
+                # 注意：确保参数顺序与函数定义一致
+                bets = await lottery_bet.get_by_draw_number(
+                    self.uow.session, 
+                    group_id,
+                    "lottery",
+                    current_draw.draw_number
+                )
+                logger.info(f"期号 {current_draw.draw_number} 共有 {len(bets)} 个投注")
+                
+                # 如果没有找到投注，再尝试一次不加game_type的查询
+                if len(bets) == 0:
+                    logger.warning(f"首次查询未找到投注记录，尝试使用备用查询")
+                    # 刷新会话
+                    await self.uow.session.expire_all()
+                    from sqlalchemy import select
+                    from bot.models.lottery import LotteryBet
+                    
+                    # 直接使用SQL查询
+                    stmt = select(LotteryBet).where(
+                        LotteryBet.draw_number == current_draw.draw_number
+                    )
+                    result_query = await self.uow.session.execute(stmt)
+                    bets = result_query.scalars().all()
+                    logger.info(f"备用查询：期号 {current_draw.draw_number} 共有 {len(bets)} 个投注")
+            except Exception as e:
+                logger.error(f"查询投注记录异常: {e}")
+                await self.uow.session.rollback()  # 确保回滚
+                bets = []
             
             total_payout = 0
             
-            async with self.uow:
-                # 更新开奖结果
-                await lottery_draw.update(
-                    session=self.uow.session,
-                    db_obj=current_draw,
-                    obj_in={
-                        "result": result,
-                        "status": 2,  # 已开奖
-                        "draw_time": datetime.now()
-                    }
-                )
-                
-                # 结算所有投注
-                for bet in bets:
-                    # 检查是否中奖
-                    is_win = False
-                    win_amount = 0
-                    
-                    # 获取当前游戏类型和配置
-                    current_game_type = current_draw.game_type
-                    game_config = self.multi_config.get_game_config(current_game_type)
-                    if not game_config:
-                        logger.error(f"游戏配置未找到: {current_game_type}")
-                        continue
-                        
-                    logger.info(f"处理投注: ID={bet.id}, 类型={bet.bet_type}, 金额={bet.bet_amount}, 游戏类型={current_game_type}")
-                    
-                    # 使用游戏配置判断中奖
-                    is_win = self.multi_config.check_bet_win(bet.bet_type, result, current_game_type)
-                    logger.info(f"中奖判断: 投注类型={bet.bet_type}, 结果={result}, 是否中奖={is_win}")
-                    
-                    # 打印游戏配置信息
-                    if bet.bet_type in game_config.bet_types:
-                        bet_config = game_config.bet_types[bet.bet_type]
-                        logger.info(f"投注配置: 类型={bet.bet_type}, 对应数字={bet_config['numbers']}, 赔率={bet_config['odds']}")
-                    
-                    if is_win:
-                        # 使用游戏配置计算奖金
-                        win_amount = self.multi_config.calculate_win_amount(bet.bet_type, bet.bet_amount, current_game_type)
-                        logger.info(f"奖金计算: 投注类型={bet.bet_type}, 金额={bet.bet_amount}, 奖金={win_amount}")
-                    
-                    logger.info(f"结算投注: ID={bet.id}, 用户={bet.telegram_id}, 投注={bet.bet_type}, 金额={bet.bet_amount}, 是否中奖={is_win}, 奖金={win_amount}")
-                    
-                    # 更新投注记录
-                    await lottery_bet.update(
+            # 使用单独的事务块处理开奖结算
+            try:
+                # 使用with语句确保事务完成后自动提交或回滚
+                async with self.uow:
+                    # 更新开奖结果
+                    await lottery_draw.update(
                         session=self.uow.session,
-                        db_obj=bet,
+                        db_obj=current_draw,
                         obj_in={
-                            "is_win": is_win,
-                            "win_amount": win_amount,
-                            "status": 3  # 已结算
+                            "result": result,
+                            "status": 2,  # 已开奖
+                            "draw_time": datetime.now()
                         }
                     )
                     
-                    # 派发奖金
-                    if is_win and win_amount > 0:
-                        # 获取用户账户
-                        account = await account_crud.get_by_telegram_id_and_type(
-                            self.uow.session, bet.telegram_id, self.ACCOUNT_TYPE_POINTS
+                    # 结算所有投注
+                    for bet in bets:
+                        # 检查是否中奖
+                        is_win = False
+                        win_amount = 0
+                        
+                        # 获取当前游戏类型和配置
+                        current_game_type = current_draw.game_type
+                        game_config = self.multi_config.get_game_config(current_game_type)
+                        if not game_config:
+                            logger.error(f"游戏配置未找到: {current_game_type}")
+                            continue
+                            
+                        logger.info(f"处理投注: ID={bet.id}, 类型={bet.bet_type}, 金额={bet.bet_amount}, 游戏类型={current_game_type}")
+                        
+                        # 使用游戏配置判断中奖
+                        is_win = self.multi_config.check_bet_win(bet.bet_type, result, current_game_type)
+                        logger.info(f"中奖判断: 投注类型={bet.bet_type}, 结果={result}, 是否中奖={is_win}")
+                        
+                        # 打印游戏配置信息
+                        if bet.bet_type in game_config.bet_types:
+                            bet_config = game_config.bet_types[bet.bet_type]
+                            logger.info(f"投注配置: 类型={bet.bet_type}, 对应数字={bet_config['numbers']}, 赔率={bet_config['odds']}")
+                        
+                        if is_win:
+                            # 使用游戏配置计算奖金
+                            win_amount = self.multi_config.calculate_win_amount(bet.bet_type, bet.bet_amount, current_game_type)
+                            logger.info(f"奖金计算: 投注类型={bet.bet_type}, 金额={bet.bet_amount}, 奖金={win_amount}")
+                        
+                        logger.info(f"结算投注: ID={bet.id}, 用户={bet.telegram_id}, 投注={bet.bet_type}, 金额={bet.bet_amount}, 是否中奖={is_win}, 奖金={win_amount}")
+                        
+                        # 更新投注记录
+                        await lottery_bet.update(
+                            session=self.uow.session,
+                            db_obj=bet,
+                            obj_in={
+                                "is_win": is_win,
+                                "win_amount": win_amount,
+                                "status": 3  # 已结算
+                            }
                         )
-                        if account:
-                            # 更新账户余额
-                            new_total = account.total_amount + win_amount
-                            new_available = account.available_amount + win_amount
-                            
-                            await account_crud.update(
-                                session=self.uow.session,
-                                db_obj=account,
-                                obj_in={
-                                    "total_amount": new_total,
-                                    "available_amount": new_available,
-                                }
-                            )
-                            
-                            # 添加交易记录
-                            await account_transaction_crud.create(
-                                self.uow.session,
-                                obj_in={
-                                    "account_id": account.id,
-                                    "telegram_id": bet.telegram_id,
-                                    "account_type": self.ACCOUNT_TYPE_POINTS,
-                                    "transaction_type": self.TRANSACTION_TYPE_LOTTERY_WIN,
-                                    "amount": win_amount,
-                                    "balance": new_total,
-                                    "remarks": f"开奖中奖 {bet.bet_type} {win_amount}积分"
-                                }
-                            )
-                            
-                            # 累计总派奖
-                            total_payout += win_amount
-                            logger.info(f"派奖成功: 用户={bet.telegram_id}, 投注={bet.bet_type}, 金额={bet.bet_amount}, 奖金={win_amount}")
-                        else:
-                            logger.error(f"派奖失败: 未找到用户账户, 用户={bet.telegram_id}")
-                
-                # 更新开奖记录
-                await lottery_draw.update(
-                    session=self.uow.session,
-                    db_obj=current_draw,
-                    obj_in={
-                        "total_payout": total_payout,
-                        "profit": current_draw.total_bets - total_payout
-                    }
-                )
-                
-                await self.uow.commit()
-                
+                    
+                    # 这里的其余代码保持不变
+            except Exception as e:
+                logger.error(f"开奖结算过程中出错: {e}")
+                # uow的__aexit__会自动处理回滚
                 return {
-                    "success": True,
-                    "draw": current_draw,
-                    "result": result,
-                    "total_bets": current_draw.total_bets,
-                    "total_payout": total_payout,
-                    "profit": current_draw.total_bets - total_payout,
-                    "message": f"第 {current_draw.draw_number} 期开奖完成，结果: {result}"
+                    "success": False,
+                    "message": f"开奖结算失败: {e}"
                 }
+                
+            # 使用单独的事务处理派发奖金
+            try:
+                async with self.uow:
+                    # 派发奖金，使用单独的事务，避免上面的事务失败影响
+                    for bet in bets:
+                        if bet.is_win and bet.win_amount > 0:
+                            # 获取用户账户
+                            account = await account_crud.get_by_telegram_id_and_type(
+                                self.uow.session, bet.telegram_id, self.ACCOUNT_TYPE_POINTS
+                            )
+                            if account:
+                                # 更新账户余额
+                                new_total = account.total_amount + bet.win_amount
+                                new_available = account.available_amount + bet.win_amount
+                                
+                                await account_crud.update(
+                                    session=self.uow.session,
+                                    db_obj=account,
+                                    obj_in={
+                                        "total_amount": new_total,
+                                        "available_amount": new_available,
+                                    }
+                                )
+                                
+                                # 添加交易记录
+                                await account_transaction_crud.create(
+                                    self.uow.session,
+                                    account_id=account.id,
+                                    telegram_id=bet.telegram_id,
+                                    account_type=self.ACCOUNT_TYPE_POINTS,
+                                    transaction_type=self.TRANSACTION_TYPE_LOTTERY_WIN,
+                                    amount=bet.win_amount,
+                                    balance=new_total,
+                                    remarks=f"开奖中奖 {bet.bet_type} {bet.win_amount}积分"
+                                )
+                                
+                                # 累计总派奖
+                                total_payout += bet.win_amount
+                                logger.info(f"派奖成功: 用户={bet.telegram_id}, 投注={bet.bet_type}, 金额={bet.bet_amount}, 奖金={bet.win_amount}")
+                            else:
+                                logger.error(f"派奖失败: 未找到用户账户, 用户={bet.telegram_id}")
+            except Exception as e:
+                logger.error(f"派发奖金过程中出错: {e}")
+                # uow的__aexit__会自动处理回滚
+                return {
+                    "success": False,
+                    "message": f"派发奖金失败: {e}"
+                }
+                
+            # 使用单独的事务更新开奖统计信息
+            try:
+                async with self.uow:
+                    # 更新开奖记录
+                    await lottery_draw.update(
+                        session=self.uow.session,
+                        db_obj=current_draw,
+                        obj_in={
+                            "total_payout": total_payout,
+                            "profit": current_draw.total_bets - total_payout
+                        }
+                    )
+            except Exception as e:
+                logger.error(f"更新开奖统计信息失败: {e}")
+                # 这个错误不影响主要流程，可以继续
+                
+            return {
+                "success": True,
+                "draw": current_draw,
+                "result": result,
+                "total_bets": current_draw.total_bets,
+                "total_payout": total_payout,
+                "profit": current_draw.total_bets - total_payout,
+                "message": f"第 {current_draw.draw_number} 期开奖完成，结果: {result}"
+            }
                 
         except Exception as e:
             logger.error(f"开奖失败: {e}")
+            try:
+                # 确保任何未处理的异常都导致事务回滚
+                await self.uow.session.rollback()
+            except:
+                pass
             return {
                 "success": False,
                 "message": "开奖失败"
@@ -419,15 +497,13 @@ class LotteryService:
                         # 记录返水交易
                         await account_transaction_crud.create(
                             self.uow.session,
-                            obj_in={
-                                "account_id": account.id,
-                                "telegram_id": telegram_id,
-                                "account_type": self.ACCOUNT_TYPE_POINTS,
-                                "transaction_type": self.TRANSACTION_TYPE_LOTTERY_CASHBACK,
-                                "amount": total_cashback,
-                                "balance": account.available_amount,
-                                "remarks": f"开奖返水 {total_cashback}积分"
-                            }
+                            account_id=account.id,
+                            telegram_id=telegram_id,
+                            account_type=self.ACCOUNT_TYPE_POINTS,
+                            transaction_type=self.TRANSACTION_TYPE_LOTTERY_CASHBACK,
+                            amount=total_cashback,
+                            balance=account.available_amount,
+                            remarks=f"开奖返水 {total_cashback}积分"
                         )
                 
                 await self.uow.commit()

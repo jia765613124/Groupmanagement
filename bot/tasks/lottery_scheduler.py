@@ -198,21 +198,45 @@ class LotteryScheduler:
         """为指定群组执行开奖"""
         try:
             logger.info(f"开始为群组 {group_id} 执行开奖...")
-            lottery_service = await self._get_lottery_service()
-            result = await lottery_service.draw_lottery(group_id=group_id)
             
-            if result["success"]:
-                logger.info(f"✅ 群组 {group_id} 开奖完成: 结果={result['result']}, 总投注={result['total_bets']}, 总派奖={result['total_payout']}")
-                
-                # 发送开奖结果到群组
-                logger.info(f"开始发送开奖结果到群组 {group_id}...")
-                await self._send_draw_result(group_id, result)
-                
-                # 创建新的开奖期
-                logger.info(f"开始为群组 {group_id} 创建新开奖期...")
-                await self._create_new_draw(group_id)
-            else:
-                logger.error(f"❌ 群组 {group_id} 开奖失败: {result['message']}")
+            # 添加重试逻辑
+            max_retries = 3
+            retry_count = 0
+            
+            while retry_count <= max_retries:
+                try:
+                    # 获取开奖服务
+                    lottery_service = await self._get_lottery_service()
+                    # 执行开奖
+                    result = await lottery_service.draw_lottery(group_id=group_id)
+                    
+                    if result["success"]:
+                        logger.info(f"✅ 群组 {group_id} 开奖完成: 结果={result['result']}, 总投注={result['total_bets']}, 总派奖={result['total_payout']}")
+                        
+                        # 发送开奖结果到群组
+                        logger.info(f"开始发送开奖结果到群组 {group_id}...")
+                        await self._send_draw_result(group_id, result)
+                        
+                        # 创建新的开奖期
+                        logger.info(f"开始为群组 {group_id} 创建新开奖期...")
+                        await self._create_new_draw(group_id)
+                    else:
+                        logger.error(f"❌ 群组 {group_id} 开奖失败: {result['message']}")
+                    
+                    # 成功执行，跳出循环
+                    break
+                    
+                except Exception as e:
+                    retry_count += 1
+                    if "Lost connection" in str(e) and retry_count <= max_retries:
+                        logger.warning(f"数据库连接丢失，正在进行第 {retry_count} 次重试（共 {max_retries} 次）...")
+                        await asyncio.sleep(2 * retry_count)  # 延迟时间随重试次数增加
+                    else:
+                        if retry_count > max_retries:
+                            logger.error(f"❌ 群组 {group_id} 开奖失败，已达到最大重试次数: {e}")
+                        else:
+                            logger.error(f"❌ 群组 {group_id} 开奖失败，非连接问题: {e}")
+                        break
                 
         except Exception as e:
             logger.error(f"❌ 群组 {group_id} 开奖异常: {e}")
