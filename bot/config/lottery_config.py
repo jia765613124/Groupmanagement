@@ -36,7 +36,7 @@ class LotteryConfig:
     CASHBACK_RATE = 0.008  # 0.8%
     
     # 数字投注配置
-    NUMBER_BET_ODDS = 9.0
+    NUMBER_BET_ODDS = 6.0
     NUMBER_BET_MIN = 1
     NUMBER_BET_MAX = 10000
     
@@ -73,7 +73,7 @@ class LotteryConfig:
             "小": BetType(
                 name="小",
                 numbers=[1, 2, 3, 4],
-                odds=2.36,
+                odds=1.8,
                 min_bet=1,
                 max_bet=100000,
                 description="数字1、2、3、4"
@@ -81,7 +81,7 @@ class LotteryConfig:
             "大": BetType(
                 name="大",
                 numbers=[6, 7, 8, 9],
-                odds=2.36,
+                odds=1.8,
                 min_bet=1,
                 max_bet=100000,
                 description="数字6、7、8、9"
@@ -89,7 +89,7 @@ class LotteryConfig:
             "单": BetType(
                 name="单",
                 numbers=[1, 3, 7, 9],
-                odds=2.36,
+                odds=1.8,
                 min_bet=1,
                 max_bet=100000,
                 description="数字1、3、7、9"
@@ -97,7 +97,7 @@ class LotteryConfig:
             "双": BetType(
                 name="双",
                 numbers=[2, 4, 6, 8],
-                odds=2.36,
+                odds=1.8,
                 min_bet=1,
                 max_bet=100000,
                 description="数字2、4、6、8"
@@ -107,7 +107,7 @@ class LotteryConfig:
             "小单": BetType(
                 name="小单",
                 numbers=[1, 3],
-                odds=4.60,
+                odds=3.0,
                 min_bet=1,
                 max_bet=50000,
                 description="数字1、3"
@@ -115,7 +115,7 @@ class LotteryConfig:
             "小双": BetType(
                 name="小双",
                 numbers=[2, 4],
-                odds=4.60,
+                odds=3.0,
                 min_bet=1,
                 max_bet=50000,
                 description="数字2、4"
@@ -123,7 +123,7 @@ class LotteryConfig:
             "大单": BetType(
                 name="大单",
                 numbers=[7, 9],
-                odds=4.60,
+                odds=3.0,
                 min_bet=1,
                 max_bet=50000,
                 description="数字7、9"
@@ -131,7 +131,7 @@ class LotteryConfig:
             "大双": BetType(
                 name="大双",
                 numbers=[6, 8],
-                odds=4.60,
+                odds=3.0,
                 min_bet=1,
                 max_bet=50000,
                 description="数字6、8"
@@ -139,7 +139,7 @@ class LotteryConfig:
             "豹子": BetType(
                 name="豹子",
                 numbers=[0, 5],
-                odds=4.60,
+                odds=3.0,
                 min_bet=1,
                 max_bet=50000,
                 description="数字0、5"

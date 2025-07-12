@@ -1,6 +1,6 @@
 from typing import Annotated
-from sqlalchemy import BigInteger, Text, SmallInteger
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import BigInteger, Text, SmallInteger, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bot.models.base import Base, timestamp, is_deleted
 
@@ -15,7 +15,7 @@ class Account(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     
     # 用户ID
-    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=True, index=True)
     
     # Telegram用户ID
     telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
@@ -37,6 +37,9 @@ class Account(Base):
     
     # 备注
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 关联用户
+    user = relationship("User", back_populates="accounts")
     
     __table_args__ = (
         # 唯一索引：telegram_id + account_type

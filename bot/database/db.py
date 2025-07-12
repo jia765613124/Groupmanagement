@@ -33,5 +33,11 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
 async def close_db():
-    """关闭数据库连接"""
+    """关闭数据库连接
+    
+    应在以下情况调用:
+    - 应用程序退出前
+    - 处理SIGTERM/SIGINT信号时
+    - Web框架的shutdown事件中
+    """
     await engine.dispose()

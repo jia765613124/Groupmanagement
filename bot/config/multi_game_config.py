@@ -51,17 +51,17 @@ class MultiGameConfig:
                 description="经典数字开奖游戏，猜中数字获得高额奖励",
                 draw_interval=5,
                 bet_types={
-                    "小": {"numbers": [1, 2, 3, 4], "odds": 2.36, "min_bet": 1, "max_bet": 100000},
-                    "大": {"numbers": [6, 7, 8, 9], "odds": 2.36, "min_bet": 1, "max_bet": 100000},
-                    "单": {"numbers": [1, 3, 7, 9], "odds": 2.36, "min_bet": 1, "max_bet": 100000},
-                    "双": {"numbers": [2, 4, 6, 8], "odds": 2.36, "min_bet": 1, "max_bet": 100000},
-                    "小单": {"numbers": [1, 3], "odds": 4.6, "min_bet": 1, "max_bet": 50000},
-                    "小双": {"numbers": [2, 4], "odds": 4.6, "min_bet": 1, "max_bet": 50000},
-                    "大单": {"numbers": [7, 9], "odds": 4.6, "min_bet": 1, "max_bet": 50000},
-                    "大双": {"numbers": [6, 8], "odds": 4.6, "min_bet": 1, "max_bet": 50000},
-                    "豹子": {"numbers": [0, 5], "odds": 4.6, "min_bet": 1, "max_bet": 50000},
+                    "小": {"numbers": [1, 2, 3, 4], "odds": 1.8, "min_bet": 1, "max_bet": 100000},
+                    "大": {"numbers": [6, 7, 8, 9], "odds": 1.8, "min_bet": 1, "max_bet": 100000},
+                    "单": {"numbers": [1, 3, 7, 9], "odds": 1.8, "min_bet": 1, "max_bet": 100000},
+                    "双": {"numbers": [2, 4, 6, 8], "odds": 1.8, "min_bet": 1, "max_bet": 100000},
+                    "小单": {"numbers": [1, 3], "odds": 3.0, "min_bet": 1, "max_bet": 50000},
+                    "小双": {"numbers": [2, 4], "odds": 3.0, "min_bet": 1, "max_bet": 50000},
+                    "大单": {"numbers": [7, 9], "odds": 3.0, "min_bet": 1, "max_bet": 50000},
+                    "大双": {"numbers": [6, 8], "odds": 3.0, "min_bet": 1, "max_bet": 50000},
+                    "豹子": {"numbers": [0, 5], "odds": 3.0, "min_bet": 1, "max_bet": 50000},
                 },
-                number_odds=9.0,
+                number_odds=6.0,
                 number_min_bet=1,
                 number_max_bet=10000,
                 cashback_rate=0.008,
@@ -112,11 +112,11 @@ class MultiGameConfig:
         self._init_default_groups()
     
     def _init_default_groups(self):
-        """初始化默认群组配置  测试  1002417673222 开奖群组2"""
+        """初始化默认群组配置  测试  1002417673222 开奖群组2    1002882701368 开奖群组1"""
         # 示例群组配置
         default_groups = [
             GroupConfig(
-                group_id=-1002882701368,
+                group_id=-1002417673222,
                 group_name="开奖群组1",
                 game_type="lottery",
                 enabled=True,
@@ -124,7 +124,7 @@ class MultiGameConfig:
                 min_bet=1,
                 max_bet=100000,
                 auto_draw=True,
-                notification_groups=[-1002882701368]
+                notification_groups=[-1002417673222]
             ),
         ]
         

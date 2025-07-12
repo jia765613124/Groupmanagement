@@ -16,13 +16,19 @@ from bot.misc import bot
 logger = logging.getLogger(__name__)
 commands_router = Router()
 
-# 基本命令（所有用户可见）
-BASIC_COMMANDS = [
+# 私聊命令（仅在私聊中可见）
+PRIVATE_COMMANDS = [
     BotCommand(command="start", description="开始使用"),
     BotCommand(command="help", description="获取帮助信息"),
     BotCommand(command="fish", description="🎣 钓鱼游戏"),
     BotCommand(command="mining", description="⛏️ 挖矿游戏"),
     BotCommand(command="bets", description="🎲 查看投注记录"),
+]
+
+# 群聊命令（仅在群聊中可见）
+GROUP_COMMANDS = [
+    BotCommand(command="start", description="开始使用"),
+    BotCommand(command="help", description="获取帮助信息"),
 ]
 
 # 管理员命令（仅管理员可见）
@@ -32,7 +38,7 @@ ADMIN_COMMANDS = [
 
 async def setup_bot_commands():
     """
-    设置机器人命令菜单（清理所有作用域并重新设置基本命令）
+    设置机器人命令菜单（清理所有作用域并重新设置不同作用域的命令）
     """
     try:
         # 先删除所有作用域的命令
@@ -45,12 +51,19 @@ async def setup_bot_commands():
             await bot.delete_my_commands(scope=scope)
             logger.info(f"✅ 已清理作用域命令: {scope.type}")
 
-        # 设置基本命令（所有用户可见）
+        # 设置私聊命令
         await bot.set_my_commands(
-            commands=BASIC_COMMANDS,
-            scope=BotCommandScopeDefault()
+            commands=PRIVATE_COMMANDS,
+            scope=BotCommandScopeAllPrivateChats()
         )
-        logger.info("✅ 成功设置基本命令：%s", [cmd.command for cmd in BASIC_COMMANDS])
+        logger.info("✅ 成功设置私聊命令：%s", [cmd.command for cmd in PRIVATE_COMMANDS])
+
+        # 设置群聊命令
+        await bot.set_my_commands(
+            commands=GROUP_COMMANDS,
+            scope=BotCommandScopeAllGroupChats()
+        )
+        logger.info("✅ 成功设置群聊命令：%s", [cmd.command for cmd in GROUP_COMMANDS])
 
         # 设置管理员命令（仅管理员可见）
         # 注意：Telegram Bot API 不支持按用户角色设置命令，这里只是记录
