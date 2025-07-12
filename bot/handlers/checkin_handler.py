@@ -11,9 +11,11 @@ from bot.models.account import Account
 from bot.models.account_transaction import AccountTransaction
 from bot.crud.account import account
 from bot.crud.sign_in_record import sign_in_record
+from bot.config import get_config
 
 logger = logging.getLogger(__name__)
 checkin_router = Router()
+config = get_config()
 
 # 积分账户类型
 POINT_ACCOUNT_TYPE = 1
@@ -44,6 +46,15 @@ def get_bonus_description(continuous_days: int) -> str:
             return rule["description"]
     return f"连续签到{continuous_days}天"
 
+def is_allowed_group(chat_id: int) -> bool:
+    """检查群组是否允许签到"""
+    if not config.checkin_allowed_groups:
+        # 如果没有配置允许的群组，则默认允许所有群组
+        return True
+    
+    allowed_groups = [int(group_id.strip()) for group_id in config.checkin_allowed_groups.split(',') if group_id.strip()]
+    return chat_id in allowed_groups
+
 @checkin_router.message(F.text.casefold() == "签到")
 async def handle_checkin(message: Message) -> None:
     """处理签到命令"""
@@ -53,6 +64,12 @@ async def handle_checkin(message: Message) -> None:
         
         if message.chat.type not in ["group", "supergroup"]:
             logger.info(f"用户 {user_id} 尝试在非群组中签到")
+            return
+        
+        # 检查群组是否允许签到
+        if not is_allowed_group(chat_id):
+            logger.info(f"用户 {user_id} 尝试在非允许的群组 {chat_id} 中签到")
+            await message.reply("⚠️ 本群组不支持签到功能")
             return
             
         logger.info(f"用户 {user_id} 在群组 {chat_id} 中签到")
@@ -153,6 +170,12 @@ async def handle_query_points(message: Message) -> None:
         
         if message.chat.type not in ["group", "supergroup"]:
             logger.info(f"用户 {user_id} 尝试在非群组中查询积分")
+            return
+        
+        # 检查群组是否允许签到（查询积分也限制在允许签到的群组中）
+        if not is_allowed_group(chat_id):
+            logger.info(f"用户 {user_id} 尝试在非允许的群组 {chat_id} 中查询积分")
+            await message.reply("⚠️ 本群组不支持积分功能")
             return
             
         logger.info(f"用户 {user_id} 在群组 {chat_id} 中查询积分")
