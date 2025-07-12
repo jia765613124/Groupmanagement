@@ -24,6 +24,26 @@ CHECKIN_POINTS = 100
 # 签到交易类型
 CHECKIN_TRANSACTION_TYPE = 4
 
+# 连续签到奖励规则
+CONTINUOUS_CHECKIN_RULES = [
+    {"days": 3, "bonus": 200, "description": "连续签到3天"},
+    {"days": 7, "bonus": 500, "description": "连续签到7天"},
+    {"days": 14, "bonus": 1000, "description": "连续签到14天"},
+    {"days": 21, "bonus": 1500, "description": "连续签到21天"},
+    {"days": 30, "bonus": 2000, "description": "连续签到1个月"},
+    {"days": 60, "bonus": 5000, "description": "连续签到2个月"},
+    {"days": 90, "bonus": 8000, "description": "连续签到3个月"},
+    {"days": 180, "bonus": 20000, "description": "连续签到半年"},
+    {"days": 365, "bonus": 50000, "description": "连续签到一年"},
+]
+
+def get_bonus_description(continuous_days: int) -> str:
+    """根据连续签到天数获取奖励描述"""
+    for rule in CONTINUOUS_CHECKIN_RULES:
+        if continuous_days == rule["days"]:
+            return rule["description"]
+    return f"连续签到{continuous_days}天"
+
 @checkin_router.message(F.text.casefold() == "签到")
 async def handle_checkin(message: Message) -> None:
     """处理签到命令"""
@@ -49,35 +69,44 @@ async def handle_checkin(message: Message) -> None:
                 
                 # 3. 检查今天是否已经签到
                 today = datetime.date.today()
-                has_checked = await sign_in_record.get_by_telegram_id_and_date(
-                    uow.session, user_id, chat_id, today
+                has_checked = await sign_in_record.get_by_telegram_id_and_date_any_group(
+                    uow.session, user_id, today
                 )
                 
                 if has_checked:
-                    await message.reply(f"您今天已经签到过了，明天再来吧！\n当前积分：{point_account.available_amount}")
+                    # 已经在任意群组签到过了
+                    await message.reply(f"您今天已经签到过了，每天只能签到一次！\n当前积分：{point_account.available_amount}")
                     return
                 
                 # 4. 计算连续签到天数
-                continuous_days = await sign_in_record.calculate_continuous_days(
-                    uow.session, user_id, chat_id, today
+                continuous_days = await sign_in_record.calculate_continuous_days_across_groups(
+                    uow.session, user_id, today
                 )
                 
-                # 5. 计算签到积分（基础积分）
-                base_points = CHECKIN_POINTS
-                
-                # 6. 创建签到记录
+                # 5. 创建签到记录
                 record = await sign_in_record.create_sign_in(
                     uow.session, 
                     chat_id, 
                     user.id, 
                     user_id, 
-                    base_points, 
+                    CHECKIN_POINTS, 
                     continuous_days, 
                     today
                 )
                 
-                # 7. 更新账户积分
-                total_points = record.total_points
+                # 6. 计算特殊奖励积分
+                bonus_points = 0
+                bonus_description = ""
+                
+                # 查找符合条件的最高奖励等级
+                for rule in sorted(CONTINUOUS_CHECKIN_RULES, key=lambda x: x["days"], reverse=True):
+                    if continuous_days == rule["days"]:
+                        bonus_points = rule["bonus"]
+                        bonus_description = rule["description"]
+                        break
+                
+                # 7. 更新账户积分（基础积分 + 连续签到奖励 + 特殊奖励）
+                total_points = record.total_points + bonus_points
                 point_account.total_amount += total_points
                 point_account.available_amount += total_points
                 
@@ -96,14 +125,21 @@ async def handle_checkin(message: Message) -> None:
                 uow.session.add(transaction)
                 
                 # 8. 组织回复消息
-                bonus_msg = f"连续签到 {continuous_days} 天，额外奖励 {record.bonus_points} 积分！" if record.bonus_points > 0 else ""
+                reply_msg = f"✅ 签到成功！\n获得 {CHECKIN_POINTS} 基础积分\n"
                 
-                await message.reply(
-                    f"✅ 签到成功！\n"
-                    f"获得 {base_points} 积分\n"
-                    f"{bonus_msg}\n"
-                    f"当前积分：{point_account.available_amount}"
-                )
+                # 添加连续签到奖励信息
+                if record.bonus_points > 0:
+                    # 计算当前是一周内的第几天
+                    day_in_week = ((continuous_days - 1) % 7) + 1
+                    reply_msg += f"🔄 连续签到奖励：{record.bonus_points} 积分 (第{day_in_week}天)\n"
+                
+                # 添加特殊奖励信息
+                if bonus_points > 0:
+                    reply_msg += f"🎁 {bonus_description}，额外奖励：{bonus_points} 积分\n"
+                
+                reply_msg += f"当前积分：{point_account.available_amount}"
+                
+                await message.reply(reply_msg)
     except Exception as e:
         logger.error(f"签到处理失败: {e}", exc_info=True)
         await message.reply("❌ 签到失败，请稍后再试")
@@ -139,22 +175,17 @@ async def handle_query_points(message: Message) -> None:
                 
                 # 获取连续签到记录
                 today = datetime.date.today()
-                yesterday = today - datetime.timedelta(days=1)
-                yesterday_record = await sign_in_record.get_by_telegram_id_and_date(
-                    uow.session, user_id, chat_id, yesterday
-                )
-                
-                continuous_days = yesterday_record.continuous_days if yesterday_record else 0
                 
                 # 获取用户今日是否已签到
-                today_record = await sign_in_record.get_by_telegram_id_and_date(
-                    uow.session, user_id, chat_id, today
+                today_record = await sign_in_record.get_by_telegram_id_and_date_any_group(
+                    uow.session, user_id, today
                 )
                 
                 if today_record:
                     continuous_days = today_record.continuous_days
                     sign_status = "✅ 今日已签到"
                 else:
+                    continuous_days = 0  # 如果今天没签到，连续天数显示为0
                     sign_status = "❌ 今日未签到"
                 
                 await message.reply(

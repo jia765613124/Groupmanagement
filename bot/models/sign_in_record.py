@@ -40,11 +40,17 @@ class SignInRecord(Base):
     @property
     def bonus_points(self):
         """获取连续签到奖励积分"""
-        # 连续签到奖励规则：连续签到天数 * 1分
-        # 可以根据实际需求调整奖励规则
+        # 每周循环递增奖励规则
+        # 第一天100点（基础积分），第二天200点，第三天300点，以此类推
+        # 每周重置
         if self.continuous_days <= 1:
             return 0
-        return self.continuous_days - 1
+            
+        # 计算当前是一周内的第几天（1-7）
+        day_in_week = ((self.continuous_days - 1) % 7) + 1
+        
+        # 返回对应的奖励积分
+        return day_in_week * 100
 
     @property
     def total_points(self):
